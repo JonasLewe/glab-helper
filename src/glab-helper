@@ -1,0 +1,763 @@
+#!/bin/zsh
+# ─────────────────────────────────────────────────────────────
+# glab-helper — Interactive GitLab workflow helper
+# ─────────────────────────────────────────────────────────────
+#
+# SETUP:
+#   1. Install dependencies:
+#        brew install glab fzf jq
+#
+#   2. Authenticate glab:
+#        glab auth login
+#      → Choose your GitLab instance URL
+#      → Auth method: Token
+#      → Create token at: Settings → Access Tokens
+#        (Scopes: api, read_repository, write_repository)
+#      → Protocol: HTTPS (or SSH if configured)
+#
+#   3. Verify:
+#        glab auth status
+#
+#   4. Run from any GitLab repo:
+#        glab-helper
+#
+# DEPENDENCIES: glab, fzf, jq, nvim (optional, falls back to vim)
+# ─────────────────────────────────────────────────────────────
+
+# ─── Colors & Symbols ───
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+RESET=$'\033[0m'
+CYAN=$'\033[36m'
+GREEN=$'\033[32m'
+YELLOW=$'\033[33m'
+RED=$'\033[31m'
+MAGENTA=$'\033[35m'
+
+ICON_OK="✔"
+ICON_WARN="!"
+ICON_TITLE="▸"
+ICON_LABEL="◆"
+ICON_USER="◉"
+ICON_MILE="▷"
+ICON_DESC="¶"
+ICON_NEW="+"
+ICON_BRANCH="⎇"
+
+BOX="${CYAN}${BOLD}"
+BOX_V="${BOX}│${RESET}"
+
+hr() { echo "  ${DIM}──────────────────────────────────────────────${RESET}"; }
+
+# ─── Dependency check ───
+missing=()
+for cmd in glab fzf jq; do
+  if ! command -v "$cmd" &>/dev/null; then
+    missing+=("$cmd")
+  fi
+done
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo ""
+  echo "  ${RED}${ICON_WARN} Missing dependencies:${RESET} ${missing[*]}"
+  echo ""
+  echo "  Install with:"
+  echo "    ${DIM}brew install ${missing[*]}${RESET}"
+  echo ""
+  echo "  Then authenticate glab:"
+  echo "    ${DIM}glab auth login${RESET}"
+  echo ""
+  exit 1
+fi
+
+# ─── Clear screen ───
+clear
+
+# ─── Repo info ───
+echo ""
+printf "  ${DIM}Connecting to GitLab...${RESET}"
+
+repo_info=$(glab repo view --output json 2>/dev/null) || {
+  printf "\r                                \r"
+  echo ""
+  echo "  ${RED}${ICON_WARN} Not in a GitLab repo or not authenticated.${RESET}"
+  echo ""
+  echo "  Make sure you:"
+  echo "    1. ${DIM}cd${RESET} into a cloned GitLab repo"
+  echo "    2. Run ${DIM}glab auth login${RESET} if not yet authenticated"
+  echo "    3. Run ${DIM}glab auth status${RESET} to verify"
+  echo ""
+  exit 1
+}
+
+repo_name=$(jq -r '.path_with_namespace // .name_with_namespace // .name // "unknown"' <<< "$repo_info")
+project_id=$(jq -r '.id' <<< "$repo_info")
+
+printf "\r                                \r"
+
+# ─── Dynamic header box width ───
+if [[ ${#repo_name} -gt 80 ]]; then
+  repo_name="${repo_name:0:77}..."
+fi
+BOX_WIDTH=$(( ${#repo_name} > 40 ? ${#repo_name} + 8 : 48 ))
+
+box_line() {
+  local text="$1"
+  local visible_len=${#text}
+  local pad=$((BOX_WIDTH - visible_len - 2))
+  if [[ $pad -lt 0 ]]; then pad=0; fi
+  local spaces=""
+  if [[ $pad -gt 0 ]]; then
+    spaces=$(printf '%*s' "$pad" '')
+  fi
+  echo "  ${BOX}║${RESET}  ${text}${spaces}${BOX}║${RESET}"
+}
+
+# ─── Header ───
+box_top="$(printf '═%.0s' $(seq 1 $BOX_WIDTH))"
+
+echo ""
+echo "  ${BOX}╔${box_top}╗${RESET}"
+box_line "GitLab Helper"
+box_line "${repo_name}"
+echo "  ${BOX}╚${box_top}╝${RESET}"
+echo ""
+
+# ─── Shared helpers ───
+
+slugify() {
+  echo "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9]/-/g' \
+    | sed 's/--*/-/g' \
+    | sed 's/^-//;s/-$//'
+}
+
+get_default_branch() {
+  local branch
+  branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  if [[ -z "$branch" ]]; then
+    branch=$(glab api "projects/$project_id" 2>/dev/null | jq -r '.default_branch // "main"')
+  fi
+  echo "$branch"
+}
+
+# Create a branch from default branch and optionally check it out
+# Usage: offer_branch_creation <issue_number> <title>
+offer_branch_creation() {
+  local issue_nr="$1"
+  local issue_title="$2"
+
+  local slug
+  slug=$(slugify "$issue_title")
+  local branch_name="${issue_nr}-${slug}"
+
+  # Truncate to reasonable git branch name length
+  if [[ ${#branch_name} -gt 60 ]]; then
+    branch_name="${branch_name:0:60}"
+    branch_name="${branch_name%-}"
+  fi
+
+  hr
+  echo ""
+  echo "  ${MAGENTA}${ICON_BRANCH}${RESET} ${BOLD}Branch${RESET}"
+  echo ""
+  echo "  ${DIM}${branch_name}${RESET}"
+  echo ""
+  echo -n "  ${BOLD}Create branch from default branch?${RESET} ${DIM}(y/n)${RESET} "
+  read create_branch
+
+  if [[ "$create_branch" == "y" ]]; then
+    local default_branch
+    default_branch=$(get_default_branch)
+
+    git fetch origin "$default_branch" --quiet 2>/dev/null
+    if git branch "$branch_name" "origin/$default_branch" 2>/dev/null; then
+      echo ""
+      echo "  ${GREEN}${ICON_OK}${RESET} Branch ${BOLD}${branch_name}${RESET} created from ${DIM}${default_branch}${RESET}"
+
+      echo ""
+      echo -n "  ${BOLD}Check out branch now?${RESET} ${DIM}(y/n)${RESET} "
+      read do_checkout
+
+      if [[ "$do_checkout" == "y" ]]; then
+        if git checkout "$branch_name" --quiet 2>/dev/null; then
+          echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${branch_name}${RESET}"
+        else
+          echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
+        fi
+      fi
+    else
+      echo ""
+      echo "  ${RED}${ICON_WARN}${RESET} Failed to create branch"
+    fi
+  fi
+
+  echo ""
+}
+
+# Use --clean / -u NONE to prevent custom keymaps (e.g. kj→<Esc>) and plugins
+# from interfering with the editing session. noswapfile prevents recovery prompts
+# from stale swap files on re-runs.
+open_editor() {
+  if command -v nvim &>/dev/null; then
+    nvim --clean \
+      -c "set noswapfile nobackup nowritebackup" \
+      -c "syntax on | set filetype=markdown number cursorline" \
+      "$1"
+  elif command -v vim &>/dev/null; then
+    vim -u NONE --noplugin \
+      -c "set noswapfile nobackup nowritebackup" \
+      -c "syntax on | set filetype=markdown number" \
+      "$1"
+  elif [[ -n "$VISUAL" ]]; then
+    $VISUAL "$1"
+  elif [[ -n "$EDITOR" ]]; then
+    $EDITOR "$1"
+  else
+    vi "$1"
+  fi
+  return $?
+}
+
+# ═══════════════════════════════════════════
+# MAIN MENU
+# ═══════════════════════════════════════════
+
+menu_options="▸ Create new issue
+${ICON_BRANCH} Work on existing issue"
+
+action=$(fzf \
+  --prompt="  What do you want to do? > " \
+  --header="  ENTER=select" \
+  --height=~6 \
+  --reverse \
+  --border=rounded \
+  --border-label=" action " \
+  --color="border:cyan,header:dim,prompt:cyan" \
+  <<< "$menu_options" \
+  || echo "")
+
+if [[ -z "$action" ]]; then
+  echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+  exit 0
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# PATH: WORK ON EXISTING ISSUE
+# ═══════════════════════════════════════════════════════════════
+
+if [[ "$action" == *"Work on existing"* ]]; then
+
+  echo ""
+  printf "  ${DIM}Fetching issues and branches...${RESET}"
+
+  # Fetch open issues
+  issues_json=$(glab issue list -s opened --output json -P 100 2>/dev/null || echo "[]")
+  issue_count=$(jq 'if type == "array" then length else 0 end' <<< "$issues_json")
+
+  # Fetch remote branches
+  git fetch origin --quiet 2>/dev/null
+  remote_branches=$(git branch -r 2>/dev/null | sed 's|^ *origin/||' | sed 's|^ *||')
+
+  printf "\r                                        \r"
+
+  if [[ "$issue_count" -eq 0 ]]; then
+    echo ""
+    echo "  ${DIM}No open issues found.${RESET}"
+    echo ""
+    exit 0
+  fi
+
+  # Build fzf list: check each issue for existing branch
+  issue_list=""
+  while IFS= read -r line; do
+    local_iid=$(jq -r '.iid' <<< "$line")
+    local_title=$(jq -r '.title' <<< "$line")
+
+    # Check if any remote branch starts with <iid>-
+    existing_branch=$(grep -E "^${local_iid}-" <<< "$remote_branches" | head -1)
+
+    if [[ -n "$existing_branch" ]]; then
+      issue_list+="  #${local_iid}  ${local_title}  ${DIM}[${ICON_BRANCH} ${existing_branch}]${RESET}"$'\n'
+    else
+      issue_list+="  #${local_iid}  ${local_title}"$'\n'
+    fi
+  done < <(jq -c '.[]' <<< "$issues_json")
+
+  # Remove trailing newline
+  issue_list="${issue_list%$'\n'}"
+
+  echo ""
+  echo "  ${MAGENTA}${ICON_TITLE}${RESET} ${BOLD}Open Issues${RESET} ${DIM}(${issue_count} issues)${RESET}"
+  echo ""
+
+  selected_issue=$(fzf \
+    --prompt="  Issue > " \
+    --header="  ENTER=select  ESC=cancel" \
+    --height=~20 \
+    --reverse \
+    --border=rounded \
+    --border-label=" open issues " \
+    --color="border:magenta,header:dim,prompt:magenta" \
+    --ansi \
+    <<< "$issue_list" \
+    || echo "")
+
+  if [[ -z "$selected_issue" ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+    exit 0
+  fi
+
+  # Parse issue number and title from selection
+  selected_iid=$(grep -oE '#[0-9]+' <<< "$selected_issue" | head -1 | tr -d '#')
+  selected_title=$(jq -r --argjson iid "$selected_iid" '.[] | select(.iid == $iid) | .title' <<< "$issues_json")
+
+  # Check if branch already exists
+  existing=$(grep -E "^${selected_iid}-" <<< "$remote_branches" | head -1)
+  if [[ -n "$existing" ]]; then
+    echo ""
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Branch ${BOLD}${existing}${RESET} already exists for this issue."
+    echo ""
+    echo -n "  ${BOLD}Check out existing branch?${RESET} ${DIM}(y/n)${RESET} "
+    read do_checkout
+
+    if [[ "$do_checkout" == "y" ]]; then
+      if git checkout "$existing" --quiet 2>/dev/null || git checkout -b "$existing" "origin/$existing" --quiet 2>/dev/null; then
+        echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${existing}${RESET}"
+      else
+        echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
+      fi
+    fi
+    echo ""
+  else
+    echo ""
+    echo "  ${GREEN}${ICON_OK}${RESET} Selected: ${BOLD}#${selected_iid}${RESET} ${selected_title}"
+    offer_branch_creation "$selected_iid" "$selected_title"
+  fi
+
+  exit 0
+fi
+
+# ═══════════════════════════════════════════════════════════════
+# PATH: CREATE NEW ISSUE
+# ═══════════════════════════════════════════════════════════════
+
+echo ""
+printf "  ${DIM}Fetching project data...${RESET}"
+
+# ─── Fetch labels ───
+labels_json=$(glab label list -P 100 --output json 2>/dev/null || echo "[]")
+all_labels=$(jq -r 'if type == "array" then sort_by(.name) | .[].name else empty end' <<< "$labels_json" 2>/dev/null)
+label_count=$(awk 'NF{c++} END{print c+0}' <<< "$all_labels")
+
+# ─── Fetch members ───
+members_json=$(glab api "projects/$project_id/members/all?per_page=100" 2>/dev/null) || members_json="[]"
+if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
+  members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
+else
+  members=""
+fi
+member_count=$(awk 'NF{c++} END{print c+0}' <<< "$members")
+
+# ─── Fetch milestones ───
+ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null) || ms_json="[]"
+if jq -e 'type == "array"' <<< "$ms_json" &>/dev/null; then
+  milestones=$(jq -r '.[].title // empty' <<< "$ms_json" 2>/dev/null)
+else
+  milestones=""
+fi
+ms_count=$(awk 'NF{c++} END{print c+0}' <<< "$milestones")
+
+printf "\r                                    \r"
+
+# Show stats
+echo "  ${DIM}${label_count} labels  ·  ${member_count} members  ·  ${ms_count} milestones${RESET}"
+echo ""
+
+# ═══════════════════════════════════════════
+# TITLE
+# ═══════════════════════════════════════════
+echo -n "  ${YELLOW}${ICON_TITLE}${RESET} ${BOLD}Title:${RESET} "
+read title
+if [[ -z "$title" ]]; then
+  echo "  ${RED}${ICON_WARN} Aborted: title is required.${RESET}"
+  exit 1
+fi
+
+# ═══════════════════════════════════════════
+# LABELS
+# ═══════════════════════════════════════════
+echo ""
+hr
+echo "  ${MAGENTA}${ICON_LABEL}${RESET} ${BOLD}Labels${RESET} ${DIM}(TAB=select, ENTER=confirm, ESC=skip)${RESET}"
+echo ""
+
+# Suggest example labels if none exist
+if [[ -z "$all_labels" ]]; then
+  echo "  ${DIM}No labels found. Here are some suggestions:${RESET}"
+  echo ""
+  echo "    ${DIM}prio::1-blocker    prio::2-important   prio::3-roadmap${RESET}"
+  echo "    ${DIM}type::feature      type::bug           type::research${RESET}"
+  echo "    ${DIM}type::docs         epic::backend       epic::frontend${RESET}"
+  echo ""
+fi
+
+labels_csv=""
+label_loop=true
+while $label_loop; do
+  label_options="${ICON_NEW} Create new label..."
+  if [[ -n "$all_labels" ]]; then
+    label_options="${ICON_NEW} Create new label...
+${all_labels}"
+  fi
+
+  selected_labels=$(fzf \
+    --multi \
+    --prompt="  Labels > " \
+    --header="  TAB=multi-select  ENTER=confirm  ESC=skip" \
+    --height=~20 \
+    --reverse \
+    --border=rounded \
+    --border-label=" labels " \
+    --color="border:magenta,header:dim,prompt:magenta" \
+    <<< "$label_options" \
+    || echo "")
+
+  if grep -q "Create new label" <<< "$selected_labels"; then
+    echo ""
+    echo -n "  ${ICON_NEW} Label name (e.g. ${DIM}scope::frontend${RESET}): "
+    read new_label_name
+    if [[ -n "$new_label_name" ]]; then
+      echo -n "  ${ICON_NEW} Color hex (e.g. ${DIM}#E44D2E${RESET}, empty=default): "
+      read new_label_color
+      create_cmd=(glab label create -n "$new_label_name")
+      if [[ -n "$new_label_color" ]]; then
+        create_cmd+=(-c "$new_label_color")
+      fi
+      if "${create_cmd[@]}" &>/dev/null; then
+        echo "  ${GREEN}${ICON_OK}${RESET} Label ${BOLD}${new_label_name}${RESET} created"
+        all_labels=$(printf "%s\n%s" "$all_labels" "$new_label_name" | sort | grep -v '^$')
+      else
+        echo "  ${RED}${ICON_WARN}${RESET} Failed to create label"
+      fi
+      echo ""
+      echo "  ${DIM}Reopening label selector...${RESET}"
+      echo ""
+    fi
+  else
+    selected_labels=$(grep -v "Create new label" <<< "$selected_labels" || echo "")
+    if [[ -n "$selected_labels" ]]; then
+      labels_csv=$(paste -sd "," - <<< "$selected_labels")
+    fi
+    label_loop=false
+  fi
+done
+
+if [[ -n "$labels_csv" ]]; then
+  echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${labels_csv}${RESET}"
+else
+  echo "  ${DIM}  none${RESET}"
+fi
+
+# ═══════════════════════════════════════════
+# ASSIGNEE
+# ═══════════════════════════════════════════
+echo ""
+hr
+echo "  ${MAGENTA}${ICON_USER}${RESET} ${BOLD}Assignee${RESET} ${DIM}(ENTER=confirm, ESC=skip)${RESET}"
+echo ""
+
+assignee=""
+if [[ -n "$members" ]]; then
+  member_options="${ICON_NEW} Enter manually...
+${members}"
+
+  selected_member=$(fzf \
+    --prompt="  Assignee > " \
+    --header="  ENTER=select  ESC=skip" \
+    --height=~15 \
+    --reverse \
+    --border=rounded \
+    --border-label=" members " \
+    --color="border:magenta,header:dim,prompt:magenta" \
+    <<< "$member_options" \
+    || echo "")
+
+  if grep -q "Enter manually" <<< "$selected_member"; then
+    echo -n "  ${ICON_NEW} Username: "
+    read assignee
+  elif [[ -n "$selected_member" ]]; then
+    assignee=$(awk '{print $1}' <<< "$selected_member")
+  fi
+else
+  echo -n "  ${ICON_NEW} Username (leave empty to skip): "
+  read assignee
+fi
+
+if [[ -n "$assignee" ]]; then
+  echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${assignee}${RESET}"
+else
+  echo "  ${DIM}  none${RESET}"
+fi
+
+# ═══════════════════════════════════════════
+# MILESTONE
+# ═══════════════════════════════════════════
+echo ""
+hr
+echo "  ${MAGENTA}${ICON_MILE}${RESET} ${BOLD}Milestone${RESET} ${DIM}(ENTER=confirm, ESC=skip)${RESET}"
+echo ""
+
+milestone=""
+ms_options="  Skip (no milestone)
+${ICON_NEW} Create new milestone..."
+if [[ -n "$milestones" ]]; then
+  ms_options="  Skip (no milestone)
+${ICON_NEW} Create new milestone...
+${milestones}"
+fi
+
+selected_ms=$(fzf \
+  --prompt="  Milestone > " \
+  --header="  ENTER=select  ESC=skip" \
+  --height=~10 \
+  --reverse \
+  --border=rounded \
+  --border-label=" milestones " \
+  --color="border:magenta,header:dim,prompt:magenta" \
+  <<< "$ms_options" \
+  || echo "")
+
+if grep -q "Create new milestone" <<< "$selected_ms"; then
+  echo ""
+  echo -n "  ${ICON_NEW} Milestone title: "
+  read ms_title
+  if [[ -n "$ms_title" ]]; then
+    echo -n "  ${ICON_NEW} Due date (${DIM}YYYY-MM-DD${RESET}, empty=none): "
+    read ms_due
+    ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
+    if [[ -n "$ms_due" ]]; then
+      ms_cmd+=(-f "due_date=$ms_due")
+    fi
+    if "${ms_cmd[@]}" &>/dev/null; then
+      echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${ms_title}${RESET} created"
+      milestone="$ms_title"
+    else
+      echo "  ${RED}${ICON_WARN}${RESET} Failed to create milestone"
+    fi
+  fi
+elif grep -q "Skip" <<< "$selected_ms"; then
+  milestone=""
+elif [[ -n "$selected_ms" ]]; then
+  milestone="$selected_ms"
+fi
+
+if [[ -n "$milestone" ]]; then
+  echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${milestone}${RESET}"
+else
+  echo "  ${DIM}  none${RESET}"
+fi
+
+# ═══════════════════════════════════════════
+# DESCRIPTION
+# ═══════════════════════════════════════════
+echo ""
+hr
+echo "  ${MAGENTA}${ICON_DESC}${RESET} ${BOLD}Description${RESET}"
+echo ""
+
+tmpfile=$(mktemp /tmp/gl-issue-XXXXXX.md)
+trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
+
+DESCRIPTION_TEMPLATE='## Context
+<!-- Why is this important? -->
+
+## Acceptance Criteria
+- [ ] ...
+
+## Dependencies
+- Blocked by: #
+- Enables: #'
+
+cat > "$tmpfile" <<< "$DESCRIPTION_TEMPLATE"
+
+echo "  ${DIM}Opening editor... (save & quit to continue, :cq to abort)${RESET}"
+echo ""
+
+while true; do
+  open_editor "$tmpfile"
+  editor_status=$?
+
+  # :cq in vim/nvim exits with status 1 — treat as explicit abort
+  if [[ $editor_status -ne 0 ]]; then
+    echo ""
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Editor exited with error (status $editor_status). Aborting."
+    exit 1
+  fi
+
+  # Guard against deleted temp file (e.g. from signal during editing)
+  if [[ ! -f "$tmpfile" ]]; then
+    echo ""
+    echo "  ${RED}${ICON_WARN}${RESET} Description file was lost. Aborting."
+    exit 1
+  fi
+
+  description=$(cat "$tmpfile")
+
+  # If description is empty or unchanged, offer to retry
+  desc_trimmed_check=$(awk '{$1=$1};1' <<< "$description" | tr -s '\n')
+  template_trimmed_check=$(awk '{$1=$1};1' <<< "$DESCRIPTION_TEMPLATE" | tr -s '\n')
+
+  if [[ -z "${description// /}" || -z "${description//$'\n'/}" ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Description is empty."
+    echo -n "  ${BOLD}(r)etry / (c)ontinue / (a)bort?${RESET} "
+    read empty_choice
+    case "$empty_choice" in
+      r|R) cat > "$tmpfile" <<< "$DESCRIPTION_TEMPLATE"; continue ;;
+      a|A) echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."; exit 0 ;;
+      *)   break ;;
+    esac
+  elif [[ "$desc_trimmed_check" == "$template_trimmed_check" ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Description was not modified from template."
+    echo -n "  ${BOLD}(r)etry / (c)ontinue / (a)bort?${RESET} "
+    read unchanged_choice
+    case "$unchanged_choice" in
+      r|R) continue ;;
+      a|A) echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."; exit 0 ;;
+      *)   break ;;
+    esac
+  else
+    break
+  fi
+done
+
+
+# ═══════════════════════════════════════════
+# SUMMARY
+# ═══════════════════════════════════════════
+
+# Word-wrap text to a max width
+wrap_text() {
+  fold -s -w "$2" <<< "$1"
+}
+
+# Collect all summary lines (plain text for width calculation)
+summary_lines=()
+summary_lines+=("Summary")
+summary_lines+=("---")  # separator marker
+summary_lines+=("${ICON_TITLE} Title:     ${title}")
+summary_lines+=("${ICON_LABEL} Labels:    ${labels_csv:-none}")
+summary_lines+=("${ICON_USER} Assignee:  ${assignee:-none}")
+summary_lines+=("${ICON_MILE} Milestone: ${milestone:-none}")
+summary_lines+=("---")  # separator marker
+summary_lines+=("${ICON_DESC} Description:")
+
+# Wrap description lines at 70 chars and collect them
+desc_wrapped=()
+while IFS= read -r line; do
+  if [[ ${#line} -gt 70 ]]; then
+    while IFS= read -r wrapped; do
+      desc_wrapped+=("$wrapped")
+    done < <(wrap_text "$line" 70)
+  else
+    desc_wrapped+=("$line")
+  fi
+done <<< "$description"
+
+for dline in "${desc_wrapped[@]}"; do
+  summary_lines+=("   ${dline}")
+done
+
+# Find the widest line
+max_w=0
+for sline in "${summary_lines[@]}"; do
+  if [[ "$sline" == "---" ]]; then continue; fi
+  local_len=${#sline}
+  if [[ $local_len -gt $max_w ]]; then
+    max_w=$local_len
+  fi
+done
+
+# Add padding (2 left + 2 right)
+sum_box_w=$((max_w + 4))
+if [[ $sum_box_w -lt 30 ]]; then sum_box_w=30; fi
+
+sum_border=$(printf '─%.0s' $(seq 1 $sum_box_w))
+
+# Print summary box
+echo ""
+echo "  ${BOX}┌${sum_border}┐${RESET}"
+
+for sline in "${summary_lines[@]}"; do
+  if [[ "$sline" == "---" ]]; then
+    echo "  ${BOX}├${sum_border}┤${RESET}"
+    continue
+  fi
+  local_len=${#sline}
+  pad=$((sum_box_w - local_len - 2))
+  if [[ $pad -lt 0 ]]; then pad=0; fi
+  spaces=""
+  if [[ $pad -gt 0 ]]; then
+    spaces=$(printf '%*s' "$pad" '')
+  fi
+  echo "  ${BOX_V} ${sline}${spaces} ${BOX}│${RESET}"
+done
+
+echo "  ${BOX}└${sum_border}┘${RESET}"
+echo ""
+
+echo -n "  ${BOLD}Create this issue?${RESET} ${DIM}(y/n)${RESET} "
+read confirm
+
+if [[ "$confirm" != "y" ]]; then
+  echo ""
+  echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+  exit 0
+fi
+
+# ─── Build & execute command ───
+cmd=(glab issue create -t "$title")
+
+if [[ -n "$labels_csv" ]]; then
+  cmd+=(-l "$labels_csv")
+fi
+
+if [[ -n "$assignee" ]]; then
+  cmd+=(-a "$assignee")
+fi
+
+if [[ -n "$milestone" ]]; then
+  cmd+=(-m "$milestone")
+fi
+
+cmd+=(-d "$description")
+
+echo ""
+printf "  ${DIM}Creating issue...${RESET}"
+output=$("${cmd[@]}" 2>&1)
+create_status=$?
+printf "\r                       \r"
+
+if [[ $create_status -eq 0 ]]; then
+  echo ""
+  echo "  ${GREEN}${ICON_OK} Issue created successfully${RESET}"
+  echo "  ${DIM}${output}${RESET}"
+  echo ""
+else
+  echo ""
+  echo "  ${RED}${ICON_WARN} Failed to create issue${RESET}"
+  echo "  ${DIM}${output}${RESET}"
+  echo ""
+  exit 1
+fi
+
+# ═══════════════════════════════════════════
+# BRANCH CREATION (after issue create)
+# ═══════════════════════════════════════════
+
+# Extract issue number from glab output URL (e.g. .../issues/42)
+issue_number=$(grep -oE '/issues/[0-9]+' <<< "$output" | grep -oE '[0-9]+' | tail -1)
+
+if [[ -n "$issue_number" ]]; then
+  offer_branch_creation "$issue_number" "$title"
+fi
