@@ -21,7 +21,7 @@
 #   4. Run from any GitLab repo:
 #        glab-helper
 #
-# DEPENDENCIES: glab, fzf, jq, nvim (optional, falls back to vim)
+# DEPENDENCIES: glab, fzf (0.35+), jq, nvim (optional, falls back to vim)
 # ─────────────────────────────────────────────────────────────
 
 # ─── Help flag ───
@@ -74,7 +74,11 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   echo "  ${RED}${ICON_WARN} Missing dependencies:${RESET} ${missing[*]}"
   echo ""
   echo "  Install with:"
-  echo "    ${DIM}brew install ${missing[*]}${RESET}"
+  if [[ "$(uname)" == "Darwin" ]]; then
+    echo "    ${DIM}brew install ${missing[*]}${RESET}"
+  else
+    echo "    ${DIM}sudo pacman -S ${missing[*]}${RESET}"
+  fi
   echo ""
   echo "  Then authenticate glab:"
   echo "    ${DIM}glab auth login${RESET}"
@@ -165,10 +169,12 @@ get_default_branch() {
 offer_branch_creation() {
   local issue_nr="$1"
   local issue_title="$2"
+  local slug branch_name branch_name_input want_branch
+  local do_checkout checkout_err checkout_rc branch_err
+  local default_branch branch_list selected_base
 
-  local slug
   slug=$(slugify "$issue_title")
-  local branch_name="${issue_nr}-${slug}"
+  branch_name="${issue_nr}-${slug}"
 
   # Truncate at word boundary (hyphen) to max 60 chars
   if [[ ${#branch_name} -gt 60 ]]; then
@@ -180,9 +186,18 @@ offer_branch_creation() {
   echo ""
   echo "  ${MAGENTA}${ICON_BRANCH}${RESET} ${BOLD}Branch${RESET}"
   echo ""
+  echo -n "  ${BOLD}Create a branch for this issue?${RESET} ${DIM}(y/n)${RESET} "
+  read -r want_branch
+  if [[ "$want_branch" != "y" ]]; then
+    echo ""
+    return
+  fi
+
+  echo ""
   echo -n "  ${BOLD}Branch name${RESET} ${DIM}[${branch_name}]${RESET}: "
   read -r branch_name_input
   branch_name="${branch_name_input:-$branch_name}"
+
   # Check if branch already exists locally
   if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
     echo ""
@@ -203,11 +218,9 @@ offer_branch_creation() {
   fi
 
   # Select base branch — list remote branches sorted by last commit date
-  local default_branch
   default_branch=$(get_default_branch)
 
   git fetch origin --quiet 2>/dev/null
-  local branch_list
   branch_list=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/remotes/origin/ \
     | sed 's|^origin/||' \
     | grep -v '^HEAD$')
@@ -220,7 +233,6 @@ ${branch_list}"
   fi
 
   echo ""
-  local selected_base
   selected_base=$(fzf \
     --prompt="  Base branch > " \
     --header="  ENTER=select  ESC=cancel" \
@@ -405,10 +417,12 @@ if [[ "$action" == *"Work on existing"* ]]; then
 
     if [[ "$do_checkout" == "y" ]]; then
       checkout_err=$(git checkout "$existing" 2>&1)
-      if [[ $? -ne 0 ]]; then
+      checkout_rc=$?
+      if [[ $checkout_rc -ne 0 ]]; then
         checkout_err=$(git checkout -b "$existing" "origin/$existing" 2>&1)
+        checkout_rc=$?
       fi
-      if [[ $? -eq 0 ]]; then
+      if [[ $checkout_rc -eq 0 ]]; then
         echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${existing}${RESET}"
       else
         echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
@@ -662,7 +676,7 @@ hr
 echo "  ${MAGENTA}${ICON_DESC}${RESET} ${BOLD}Description${RESET}"
 echo ""
 
-tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX.md")
+tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
 trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
 
 DESCRIPTION_TEMPLATE='## Context
@@ -856,9 +870,5 @@ fi
 issue_number=$(grep -oE '/issues/[0-9]+' <<< "$output" | grep -oE '[0-9]+' | tail -1)
 
 if [[ -n "$issue_number" ]]; then
-  echo -n "  ${BOLD}Create a branch for this issue?${RESET} ${DIM}(y/n)${RESET} "
-  read -r want_branch
-  if [[ "$want_branch" == "y" ]]; then
-    offer_branch_creation "$issue_number" "$title"
-  fi
+  offer_branch_creation "$issue_number" "$title"
 fi
