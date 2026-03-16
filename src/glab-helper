@@ -24,6 +24,19 @@
 # DEPENDENCIES: glab, fzf, jq, nvim (optional, falls back to vim)
 # ─────────────────────────────────────────────────────────────
 
+# ─── Help flag ───
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  echo ""
+  echo "  glab-helper — Interactive GitLab workflow helper"
+  echo ""
+  echo "  Usage: glab-helper"
+  echo ""
+  echo "  Run from any cloned GitLab repo. Requires: glab, fzf, jq"
+  echo "  Authenticate first: glab auth login"
+  echo ""
+  exit 0
+fi
+
 # ─── Colors & Symbols ───
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
@@ -74,7 +87,7 @@ clear
 
 # ─── Repo info ───
 echo ""
-printf "  ${DIM}Connecting to GitLab...${RESET}"
+echo -n "  ${DIM}Connecting to GitLab...${RESET}"
 
 repo_info=$(glab repo view --output json 2>/dev/null) || {
   printf "\r                                \r"
@@ -125,11 +138,17 @@ echo ""
 # ─── Shared helpers ───
 
 slugify() {
-  echo "$1" \
+  local result
+  result=$(echo "$1" \
     | tr '[:upper:]' '[:lower:]' \
     | sed 's/[^a-z0-9]/-/g' \
     | sed 's/--*/-/g' \
-    | sed 's/^-//;s/-$//'
+    | sed 's/^-//;s/-$//')
+  # Fallback for non-ASCII-only titles
+  if [[ -z "$result" ]]; then
+    result="issue"
+  fi
+  echo "$result"
 }
 
 get_default_branch() {
@@ -151,46 +170,98 @@ offer_branch_creation() {
   slug=$(slugify "$issue_title")
   local branch_name="${issue_nr}-${slug}"
 
-  # Truncate to reasonable git branch name length
+  # Truncate at word boundary (hyphen) to max 60 chars
   if [[ ${#branch_name} -gt 60 ]]; then
     branch_name="${branch_name:0:60}"
-    branch_name="${branch_name%-}"
+    branch_name="${branch_name%-*}"  # truncate to last full word
   fi
 
   hr
   echo ""
   echo "  ${MAGENTA}${ICON_BRANCH}${RESET} ${BOLD}Branch${RESET}"
   echo ""
-  echo "  ${DIM}${branch_name}${RESET}"
-  echo ""
-  echo -n "  ${BOLD}Create branch from default branch?${RESET} ${DIM}(y/n)${RESET} "
-  read create_branch
-
-  if [[ "$create_branch" == "y" ]]; then
-    local default_branch
-    default_branch=$(get_default_branch)
-
-    git fetch origin "$default_branch" --quiet 2>/dev/null
-    if git branch "$branch_name" "origin/$default_branch" 2>/dev/null; then
-      echo ""
-      echo "  ${GREEN}${ICON_OK}${RESET} Branch ${BOLD}${branch_name}${RESET} created from ${DIM}${default_branch}${RESET}"
-
-      echo ""
-      echo -n "  ${BOLD}Check out branch now?${RESET} ${DIM}(y/n)${RESET} "
-      read do_checkout
-
-      if [[ "$do_checkout" == "y" ]]; then
-        if git checkout "$branch_name" --quiet 2>/dev/null; then
-          echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${branch_name}${RESET}"
-        else
-          echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
-        fi
-      fi
-    else
-      echo ""
-      echo "  ${RED}${ICON_WARN}${RESET} Failed to create branch"
+  echo -n "  ${BOLD}Branch name${RESET} ${DIM}[${branch_name}]${RESET}: "
+  read -r branch_name_input
+  branch_name="${branch_name_input:-$branch_name}"
+  # Check if branch already exists locally
+  if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
+    echo ""
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Branch ${BOLD}${branch_name}${RESET} already exists locally."
+    echo ""
+    echo -n "  ${BOLD}Check out existing branch?${RESET} ${DIM}(y/n)${RESET} "
+    read -r do_checkout
+    if [[ "$do_checkout" == "y" ]]; then
+      checkout_err=$(git checkout "$branch_name" 2>&1) && {
+        echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${branch_name}${RESET}"
+      } || {
+        echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
+        echo "  ${DIM}${checkout_err}${RESET}"
+      }
     fi
+    echo ""
+    return
   fi
+
+  # Select base branch — list remote branches sorted by last commit date
+  local default_branch
+  default_branch=$(get_default_branch)
+
+  git fetch origin --quiet 2>/dev/null
+  local branch_list
+  branch_list=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/remotes/origin/ \
+    | sed 's|^origin/||' \
+    | grep -v '^HEAD$')
+
+  # Move default branch to top of list
+  if [[ -n "$default_branch" ]]; then
+    branch_list=$(echo "$branch_list" | grep -v "^${default_branch}$")
+    branch_list="${default_branch} (default)
+${branch_list}"
+  fi
+
+  echo ""
+  local selected_base
+  selected_base=$(fzf \
+    --prompt="  Base branch > " \
+    --header="  ENTER=select  ESC=cancel" \
+    --height=~40 \
+    --reverse \
+    --border=rounded \
+    --border-label=" base branch " \
+    --color="border:magenta,header:dim,prompt:magenta" \
+    <<< "$branch_list" \
+    || echo "")
+
+  if [[ -z "$selected_base" ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+    echo ""
+    return
+  fi
+
+  # Strip "(default)" suffix if present
+  selected_base="${selected_base% (default)}"
+
+  branch_err=$(git branch "$branch_name" "origin/$selected_base" 2>&1) && {
+    echo ""
+    echo "  ${GREEN}${ICON_OK}${RESET} Branch ${BOLD}${branch_name}${RESET} created from ${DIM}${selected_base}${RESET}"
+
+    echo ""
+    echo -n "  ${BOLD}Check out branch now?${RESET} ${DIM}(y/n)${RESET} "
+    read -r do_checkout
+
+    if [[ "$do_checkout" == "y" ]]; then
+      checkout_err=$(git checkout "$branch_name" 2>&1) && {
+        echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${branch_name}${RESET}"
+      } || {
+        echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
+        echo "  ${DIM}${checkout_err}${RESET}"
+      }
+    fi
+  } || {
+    echo ""
+    echo "  ${RED}${ICON_WARN}${RESET} Failed to create branch"
+    echo "  ${DIM}${branch_err}${RESET}"
+  }
 
   echo ""
 }
@@ -210,13 +281,12 @@ open_editor() {
       -c "syntax on | set filetype=markdown number" \
       "$1"
   elif [[ -n "$VISUAL" ]]; then
-    $VISUAL "$1"
+    ${=VISUAL} "$1"
   elif [[ -n "$EDITOR" ]]; then
-    $EDITOR "$1"
+    ${=EDITOR} "$1"
   else
     vi "$1"
   fi
-  return $?
 }
 
 # ═══════════════════════════════════════════
@@ -229,7 +299,7 @@ ${ICON_BRANCH} Work on existing issue"
 action=$(fzf \
   --prompt="  What do you want to do? > " \
   --header="  ENTER=select" \
-  --height=~6 \
+  --height=~40 \
   --reverse \
   --border=rounded \
   --border-label=" action " \
@@ -249,15 +319,17 @@ fi
 if [[ "$action" == *"Work on existing"* ]]; then
 
   echo ""
-  printf "  ${DIM}Fetching issues and branches...${RESET}"
+  echo -n "  ${DIM}Fetching issues and branches...${RESET}"
 
   # Fetch open issues
-  issues_json=$(glab issue list -s opened --output json -P 100 2>/dev/null || echo "[]")
+  issues_json=$(glab issue list --output json -P 100 2>/dev/null || echo "[]")
   issue_count=$(jq 'if type == "array" then length else 0 end' <<< "$issues_json")
 
-  # Fetch remote branches
+  # Fetch remote branches (also check local branches)
   git fetch origin --quiet 2>/dev/null
-  remote_branches=$(git branch -r 2>/dev/null | sed 's|^ *origin/||' | sed 's|^ *||')
+  remote_branches=$(git branch -r 2>/dev/null | grep -v 'HEAD' | sed 's|^ *origin/||' | sed 's|^ *||')
+  local_branches=$(git branch 2>/dev/null | sed 's|^[* ] ||')
+  all_branches=$(printf '%s\n%s' "$remote_branches" "$local_branches" | sort -u)
 
   printf "\r                                        \r"
 
@@ -268,19 +340,23 @@ if [[ "$action" == *"Work on existing"* ]]; then
     exit 0
   fi
 
+  if [[ "$issue_count" -ge 100 ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} ${DIM}Showing first 100 issues (there may be more)${RESET}"
+  fi
+
   # Build fzf list: check each issue for existing branch
   issue_list=""
   while IFS= read -r line; do
-    local_iid=$(jq -r '.iid' <<< "$line")
-    local_title=$(jq -r '.title' <<< "$line")
+    iid=$(jq -r '.iid' <<< "$line")
+    ititle=$(jq -r '.title' <<< "$line")
 
-    # Check if any remote branch starts with <iid>-
-    existing_branch=$(grep -E "^${local_iid}-" <<< "$remote_branches" | head -1)
+    # Check if any branch starts with <iid>-
+    existing_branch=$(grep -E "^${iid}-" <<< "$all_branches" | head -1)
 
     if [[ -n "$existing_branch" ]]; then
-      issue_list+="  #${local_iid}  ${local_title}  ${DIM}[${ICON_BRANCH} ${existing_branch}]${RESET}"$'\n'
+      issue_list+="  #${iid}  ${ititle}  ${DIM}[${ICON_BRANCH} ${existing_branch}]${RESET}"$'\n'
     else
-      issue_list+="  #${local_iid}  ${local_title}"$'\n'
+      issue_list+="  #${iid}  ${ititle}"$'\n'
     fi
   done < <(jq -c '.[]' <<< "$issues_json")
 
@@ -294,7 +370,7 @@ if [[ "$action" == *"Work on existing"* ]]; then
   selected_issue=$(fzf \
     --prompt="  Issue > " \
     --header="  ENTER=select  ESC=cancel" \
-    --height=~20 \
+    --height=~40 \
     --reverse \
     --border=rounded \
     --border-label=" open issues " \
@@ -308,24 +384,35 @@ if [[ "$action" == *"Work on existing"* ]]; then
     exit 0
   fi
 
-  # Parse issue number and title from selection
+  # Parse issue number from selection
   selected_iid=$(grep -oE '#[0-9]+' <<< "$selected_issue" | head -1 | tr -d '#')
+
+  if [[ -z "$selected_iid" ]]; then
+    echo "  ${RED}${ICON_WARN}${RESET} Could not parse issue number from selection."
+    exit 1
+  fi
+
   selected_title=$(jq -r --argjson iid "$selected_iid" '.[] | select(.iid == $iid) | .title' <<< "$issues_json")
 
   # Check if branch already exists
-  existing=$(grep -E "^${selected_iid}-" <<< "$remote_branches" | head -1)
+  existing=$(grep -E "^${selected_iid}-" <<< "$all_branches" | head -1)
   if [[ -n "$existing" ]]; then
     echo ""
     echo "  ${YELLOW}${ICON_WARN}${RESET} Branch ${BOLD}${existing}${RESET} already exists for this issue."
     echo ""
     echo -n "  ${BOLD}Check out existing branch?${RESET} ${DIM}(y/n)${RESET} "
-    read do_checkout
+    read -r do_checkout
 
     if [[ "$do_checkout" == "y" ]]; then
-      if git checkout "$existing" --quiet 2>/dev/null || git checkout -b "$existing" "origin/$existing" --quiet 2>/dev/null; then
+      checkout_err=$(git checkout "$existing" 2>&1)
+      if [[ $? -ne 0 ]]; then
+        checkout_err=$(git checkout -b "$existing" "origin/$existing" 2>&1)
+      fi
+      if [[ $? -eq 0 ]]; then
         echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${existing}${RESET}"
       else
         echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
+        echo "  ${DIM}${checkout_err}${RESET}"
       fi
     fi
     echo ""
@@ -343,7 +430,7 @@ fi
 # ═══════════════════════════════════════════════════════════════
 
 echo ""
-printf "  ${DIM}Fetching project data...${RESET}"
+echo -n "  ${DIM}Fetching project data...${RESET}"
 
 # ─── Fetch labels ───
 labels_json=$(glab label list -P 100 --output json 2>/dev/null || echo "[]")
@@ -378,7 +465,7 @@ echo ""
 # TITLE
 # ═══════════════════════════════════════════
 echo -n "  ${YELLOW}${ICON_TITLE}${RESET} ${BOLD}Title:${RESET} "
-read title
+read -r title
 if [[ -z "$title" ]]; then
   echo "  ${RED}${ICON_WARN} Aborted: title is required.${RESET}"
   exit 1
@@ -415,7 +502,7 @@ ${all_labels}"
     --multi \
     --prompt="  Labels > " \
     --header="  TAB=multi-select  ENTER=confirm  ESC=skip" \
-    --height=~20 \
+    --height=~40 \
     --reverse \
     --border=rounded \
     --border-label=" labels " \
@@ -426,10 +513,10 @@ ${all_labels}"
   if grep -q "Create new label" <<< "$selected_labels"; then
     echo ""
     echo -n "  ${ICON_NEW} Label name (e.g. ${DIM}scope::frontend${RESET}): "
-    read new_label_name
+    read -r new_label_name
     if [[ -n "$new_label_name" ]]; then
       echo -n "  ${ICON_NEW} Color hex (e.g. ${DIM}#E44D2E${RESET}, empty=default): "
-      read new_label_color
+      read -r new_label_color
       create_cmd=(glab label create -n "$new_label_name")
       if [[ -n "$new_label_color" ]]; then
         create_cmd+=(-c "$new_label_color")
@@ -447,7 +534,16 @@ ${all_labels}"
   else
     selected_labels=$(grep -v "Create new label" <<< "$selected_labels" || echo "")
     if [[ -n "$selected_labels" ]]; then
-      labels_csv=$(paste -sd "," - <<< "$selected_labels")
+      # Quote each label to handle labels containing commas
+      labels_csv=""
+      while IFS= read -r lbl; do
+        [[ -z "$lbl" ]] && continue
+        if [[ -n "$labels_csv" ]]; then
+          labels_csv="${labels_csv},${lbl}"
+        else
+          labels_csv="$lbl"
+        fi
+      done <<< "$selected_labels"
     fi
     label_loop=false
   fi
@@ -475,7 +571,7 @@ ${members}"
   selected_member=$(fzf \
     --prompt="  Assignee > " \
     --header="  ENTER=select  ESC=skip" \
-    --height=~15 \
+    --height=~40 \
     --reverse \
     --border=rounded \
     --border-label=" members " \
@@ -485,13 +581,13 @@ ${members}"
 
   if grep -q "Enter manually" <<< "$selected_member"; then
     echo -n "  ${ICON_NEW} Username: "
-    read assignee
+    read -r assignee
   elif [[ -n "$selected_member" ]]; then
     assignee=$(awk '{print $1}' <<< "$selected_member")
   fi
 else
   echo -n "  ${ICON_NEW} Username (leave empty to skip): "
-  read assignee
+  read -r assignee
 fi
 
 if [[ -n "$assignee" ]]; then
@@ -520,7 +616,7 @@ fi
 selected_ms=$(fzf \
   --prompt="  Milestone > " \
   --header="  ENTER=select  ESC=skip" \
-  --height=~10 \
+  --height=~40 \
   --reverse \
   --border=rounded \
   --border-label=" milestones " \
@@ -531,10 +627,10 @@ selected_ms=$(fzf \
 if grep -q "Create new milestone" <<< "$selected_ms"; then
   echo ""
   echo -n "  ${ICON_NEW} Milestone title: "
-  read ms_title
+  read -r ms_title
   if [[ -n "$ms_title" ]]; then
     echo -n "  ${ICON_NEW} Due date (${DIM}YYYY-MM-DD${RESET}, empty=none): "
-    read ms_due
+    read -r ms_due
     ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
     if [[ -n "$ms_due" ]]; then
       ms_cmd+=(-f "due_date=$ms_due")
@@ -566,11 +662,11 @@ hr
 echo "  ${MAGENTA}${ICON_DESC}${RESET} ${BOLD}Description${RESET}"
 echo ""
 
-tmpfile=$(mktemp /tmp/gl-issue-XXXXXX.md)
+tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX.md")
 trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
 
 DESCRIPTION_TEMPLATE='## Context
-<!-- Why is this important? -->
+
 
 ## Acceptance Criteria
 - [ ] ...
@@ -604,14 +700,15 @@ while true; do
 
   description=$(cat "$tmpfile")
 
-  # If description is empty or unchanged, offer to retry
+  # If description is empty/whitespace-only or unchanged, offer to retry
+  desc_stripped="${description//[$' \t\n\r']/}"
   desc_trimmed_check=$(awk '{$1=$1};1' <<< "$description" | tr -s '\n')
   template_trimmed_check=$(awk '{$1=$1};1' <<< "$DESCRIPTION_TEMPLATE" | tr -s '\n')
 
-  if [[ -z "${description// /}" || -z "${description//$'\n'/}" ]]; then
+  if [[ -z "$desc_stripped" ]]; then
     echo "  ${YELLOW}${ICON_WARN}${RESET} Description is empty."
     echo -n "  ${BOLD}(r)etry / (c)ontinue / (a)bort?${RESET} "
-    read empty_choice
+    read -r empty_choice
     case "$empty_choice" in
       r|R) cat > "$tmpfile" <<< "$DESCRIPTION_TEMPLATE"; continue ;;
       a|A) echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."; exit 0 ;;
@@ -620,7 +717,7 @@ while true; do
   elif [[ "$desc_trimmed_check" == "$template_trimmed_check" ]]; then
     echo "  ${YELLOW}${ICON_WARN}${RESET} Description was not modified from template."
     echo -n "  ${BOLD}(r)etry / (c)ontinue / (a)bort?${RESET} "
-    read unchanged_choice
+    read -r unchanged_choice
     case "$unchanged_choice" in
       r|R) continue ;;
       a|A) echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."; exit 0 ;;
@@ -707,7 +804,7 @@ echo "  ${BOX}└${sum_border}┘${RESET}"
 echo ""
 
 echo -n "  ${BOLD}Create this issue?${RESET} ${DIM}(y/n)${RESET} "
-read confirm
+read -r confirm
 
 if [[ "$confirm" != "y" ]]; then
   echo ""
@@ -733,7 +830,7 @@ fi
 cmd+=(-d "$description")
 
 echo ""
-printf "  ${DIM}Creating issue...${RESET}"
+echo -n "  ${DIM}Creating issue...${RESET}"
 output=$("${cmd[@]}" 2>&1)
 create_status=$?
 printf "\r                       \r"
@@ -759,5 +856,9 @@ fi
 issue_number=$(grep -oE '/issues/[0-9]+' <<< "$output" | grep -oE '[0-9]+' | tail -1)
 
 if [[ -n "$issue_number" ]]; then
-  offer_branch_creation "$issue_number" "$title"
+  echo -n "  ${BOLD}Create a branch for this issue?${RESET} ${DIM}(y/n)${RESET} "
+  read -r want_branch
+  if [[ "$want_branch" == "y" ]]; then
+    offer_branch_creation "$issue_number" "$title"
+  fi
 fi

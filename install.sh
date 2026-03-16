@@ -25,7 +25,7 @@ echo
 mkdir -p "$BIN_DIR"
 
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    echo "⚠️  $BIN_DIR is not in your PATH."
+    echo "$BIN_DIR is not in your PATH."
     echo "   Add this to your shell config:"
     echo "     export PATH=\"\$HOME/.local/bin:\$PATH\""
     echo
@@ -42,24 +42,23 @@ for cmd in "${deps[@]}"; do
 done
 
 if [[ ${#missing[@]} -eq 0 ]]; then
-    echo "✅ All dependencies installed (${deps[*]})"
+    echo "All dependencies installed (${deps[*]})"
 else
-    echo "📥 Installing missing dependencies: ${missing[*]}"
+    echo "Installing missing dependencies: ${missing[*]}"
 
     if [[ "$OS" == "Darwin" ]]; then
         if ! command -v brew &>/dev/null; then
-            echo "❌ Homebrew not found. Install it first: https://brew.sh"
+            echo "Homebrew not found. Install it first: https://brew.sh"
             exit 1
         fi
         brew install "${missing[@]}"
     elif [[ "$OS" == "Linux" ]]; then
         if command -v pacman &>/dev/null; then
             sudo pacman -S --noconfirm "${missing[@]}"
-        elif command -v apt-get &>/dev/null; then
-            sudo apt-get install -y "${missing[@]}"
         else
-            echo "❌ No supported package manager found (brew/pacman/apt)."
+            echo "No supported package manager found (brew/pacman)."
             echo "   Please install manually: ${missing[*]}"
+            echo "   See: https://gitlab.com/gitlab-org/cli#installation"
             exit 1
         fi
     fi
@@ -72,30 +71,32 @@ src="$REPO_DIR/src/glab-helper"
 dst="$BIN_DIR/glab-helper"
 
 if [[ ! -f "$src" ]]; then
-    echo "❌ Source script not found: $src"
+    echo "Source script not found: $src"
     exit 1
 fi
 
+chmod +x "$src"
+
 if [[ -e "$dst" ]] || [[ -L "$dst" ]]; then
     if [[ "$(readlink "$dst" 2>/dev/null)" == "$src" ]]; then
-        echo "✅ glab-helper already linked"
+        echo "glab-helper already linked"
     else
-        read -p "⚠️  $dst already exists. Overwrite? (y/n) " -r
+        read -p "$dst already exists. Overwrite? (y/n) " -r || REPLY="n"
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             rm -f "$dst"
             ln -s "$src" "$dst"
-            echo "✅ glab-helper → $src"
+            echo "glab-helper → $src"
         else
-            echo "⏭️  Skipping"
+            echo "Skipping"
         fi
     fi
 else
     ln -s "$src" "$dst"
-    echo "✅ glab-helper → $src"
+    echo "glab-helper → $src"
 fi
 
 echo
-echo "✅ Installation complete!"
+echo "Installation complete!"
 echo "   Run 'glab-helper' from any GitLab repo to get started."
 echo
