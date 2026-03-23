@@ -345,6 +345,47 @@ else
 fi
 echo ""
 
+# ─── Jira API helpers ───
+
+# Fetch Jira stories that match the board labels
+# Sets JIRA_STORIES_JSON (array of issues)
+fetch_jira_stories() {
+  local labels_jql stories_response
+
+  # Build JQL from comma-separated labels: mind,Core-Service -> labels in (mind,Core-Service)
+  labels_jql="labels in (${JIRA_BOARD_LABELS}) AND issuetype = Story"
+
+  stories_response=$(curl -s \
+    -H "Authorization: Bearer ${JIRA_TOKEN}" \
+    "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=100&fields=key,summary,description,status,priority,labels,issuetype,customfield_10000,subtasks")
+
+  if [[ $? -ne 0 ]] || ! jq -e '.issues' <<< "$stories_response" &>/dev/null; then
+    return 1
+  fi
+
+  JIRA_STORIES_JSON=$(jq '.issues' <<< "$stories_response")
+  JIRA_STORIES_COUNT=$(jq 'length' <<< "$JIRA_STORIES_JSON")
+  return 0
+}
+
+# ─── DEBUG: Test Jira fetch (remove later) ───
+if $JIRA_AVAILABLE; then
+  echo -n "  ${DIM}Fetching Jira stories...${RESET}"
+  if fetch_jira_stories; then
+    printf "\r                                      \r"
+    echo "  ${GREEN}${ICON_OK}${RESET} Found ${BOLD}${JIRA_STORIES_COUNT}${RESET} Jira stories"
+    echo ""
+    jq -r '.[] | "  [\(.key)] \(.fields.summary)  (${DIM}\(.fields.status.name)${RESET})"' <<< "$JIRA_STORIES_JSON"
+    echo ""
+  else
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Failed to fetch Jira stories"
+    echo ""
+  fi
+  echo "  ${DIM}── DEBUG END ──${RESET}"
+  echo ""
+fi
+
 # ═══════════════════════════════════════════
 # MAIN MENU
 # ═══════════════════════════════════════════
