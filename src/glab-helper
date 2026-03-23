@@ -21,7 +21,7 @@
 #   4. Run from any GitLab repo:
 #        glab-helper
 #
-# DEPENDENCIES: glab, fzf (0.35+), jq, nvim (optional, falls back to vim)
+# DEPENDENCIES: glab, fzf (0.35+), jq, curl, nvim (optional, falls back to vim)
 # ─────────────────────────────────────────────────────────────
 
 # ─── Help flag ───
@@ -278,9 +278,6 @@ ${branch_list}"
   echo ""
 }
 
-# Use --clean / -u NONE to prevent custom keymaps (e.g. kj→<Esc>) and plugins
-# from interfering with the editing session. noswapfile prevents recovery prompts
-# from stale swap files on re-runs.
 # Convert Jira wiki markup to GitLab Markdown
 jira_to_markdown() {
   local text="$1"
@@ -305,6 +302,9 @@ jira_to_markdown() {
   echo "$text"
 }
 
+# Use --clean / -u NONE to prevent custom keymaps (e.g. kj→<Esc>) and plugins
+# from interfering with the editing session. noswapfile prevents recovery prompts
+# from stale swap files on re-runs.
 open_editor() {
   if command -v nvim &>/dev/null; then
     nvim --clean \
@@ -723,7 +723,11 @@ ${ICON_NEW} Manual"
     # Build labels CSV from Jira
     labels_csv=$(jq -r 'join(",")' <<< "$jira_labels_json")
     if [[ -n "$jira_priority" ]]; then
-      labels_csv="${labels_csv},prio::${jira_priority}"
+      if [[ -n "$labels_csv" ]]; then
+        labels_csv="${labels_csv},prio::${jira_priority}"
+      else
+        labels_csv="prio::${jira_priority}"
+      fi
     fi
 
     echo "  ${DIM}From Jira:${RESET} ${labels_csv}"
