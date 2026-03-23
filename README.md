@@ -75,7 +75,16 @@ After creation, optionally create a branch linked to the issue.
 
 ### Work on existing issue
 
-Browse all open issues with fzf. Issues that already have a branch are marked. Select one to create a new branch or check out an existing one.
+Browse all open issues with fzf. Issues that already have a branch are marked. After selecting an issue, an action menu lets you:
+
+- **Branch** — check out an existing branch or create a new one
+- **Edit description** — opens the current description in your editor
+- **Edit labels** — re-select labels via fzf
+- **Edit assignee** — pick a new assignee or unassign
+- **Edit milestone** — change or remove the milestone
+- **Close issue** — close the issue on GitLab
+
+The menu loops after each action so you can make multiple changes in one session. Press ESC to exit.
 
 ### Branch creation
 
