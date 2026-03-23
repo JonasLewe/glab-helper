@@ -301,6 +301,50 @@ open_editor() {
   fi
 }
 
+# ─── Jira configuration ───
+JIRA_PROJECT_PATH="ibm%2Fglab-helper"
+JIRA_AVAILABLE=false
+
+load_jira_config() {
+  local var_url var_labels var_token
+
+  var_url=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_URL" 2>/dev/null)
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+
+  var_labels=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_BOARD_LABELS" 2>/dev/null)
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+
+  var_token=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_TOKEN" 2>/dev/null)
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+
+  JIRA_URL=$(jq -r '.value' <<< "$var_url")
+  JIRA_BOARD_LABELS=$(jq -r '.value' <<< "$var_labels")
+  JIRA_TOKEN=$(jq -r '.value' <<< "$var_token")
+
+  if [[ -z "$JIRA_URL" || -z "$JIRA_BOARD_LABELS" || -z "$JIRA_TOKEN" ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+echo -n "  ${DIM}Checking Jira integration...${RESET}"
+if load_jira_config; then
+  JIRA_AVAILABLE=true
+  printf "\r                                      \r"
+  echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}Jira integration available${RESET}"
+else
+  printf "\r                                      \r"
+  echo "  ${DIM}Jira integration not configured${RESET}"
+fi
+echo ""
+
 # ═══════════════════════════════════════════
 # MAIN MENU
 # ═══════════════════════════════════════════
