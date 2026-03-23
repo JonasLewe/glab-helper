@@ -287,10 +287,10 @@ jira_to_markdown() {
   text=$(sed 's/\*\([^*]\{1,\}\)\*/*\*\1\**/g' <<< "$text")
   # Italic: _text_ -> *text* (only at word boundaries, not mid-word like my_var_name)
   text=$(sed 's/\(^\|[[:space:]]\)_\([^_]\{1,\}\)_\([[:space:]].*\|$\)/\1*\2*\3/g' <<< "$text")
+  # Ordered lists: # item -> 1. item (Jira uses # for ordered, must run before heading conversion)
+  text=$(sed 's/^#\s\+/1. /' <<< "$text")
   # Headings: h1. -> #, h2. -> ##, etc. (multiline)
   text=$(sed 's/^h1\.\s*/# /;s/^h2\.\s*/## /;s/^h3\.\s*/### /;s/^h4\.\s*/#### /' <<< "$text")
-  # Ordered lists: # item -> 1. item (Jira uses # for ordered)
-  text=$(sed 's/^#\s\+/1. /' <<< "$text")
   # Links: [text|url] -> [text](url)
   text=$(sed 's/\[\([^|]*\)|\([^]]*\)\]/[\1](\2)/g' <<< "$text")
   # Code blocks: {code}...{code} -> ```...```
