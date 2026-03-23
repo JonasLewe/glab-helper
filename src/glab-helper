@@ -331,6 +331,18 @@ load_jira_config() {
     return 1
   fi
 
+  # Check if current project is the target project
+  local var_target
+  var_target=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_TARGET_PROJECT" 2>/dev/null)
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+  JIRA_TARGET_PROJECT=$(jq -r '.value' <<< "$var_target")
+
+  if [[ "$repo_name" != "$JIRA_TARGET_PROJECT" ]]; then
+    return 1
+  fi
+
   return 0
 }
 
@@ -341,7 +353,6 @@ if load_jira_config; then
   echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}Jira integration available${RESET}"
 else
   printf "\r                                      \r"
-  echo "  ${DIM}Jira integration not configured${RESET}"
 fi
 echo ""
 
