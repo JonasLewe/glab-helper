@@ -517,265 +517,263 @@ elif [[ "$action" == *"Work on existing"* ]]; then
     echo "  ${DIM}${ICON_BRANCH} ${existing_branch}${RESET}"
   fi
 
-  # ─── Action menu ───
-  echo ""
-  work_options="${ICON_BRANCH} Branch (checkout / create)
+  # ─── Action menu (loop) ───
+  while true; do
+    echo ""
+    work_options="${ICON_BRANCH} Branch (checkout / create)
 ${ICON_DESC} Edit description
 ${ICON_LABEL} Edit labels
 ${ICON_USER} Edit assignee
 ${ICON_MILE} Edit milestone
 ${ICON_WARN} Close issue"
 
-  work_action=$(fzf \
-    --prompt="  Action > " \
-    --header="  ENTER=select  ESC=cancel" \
-    --height=~40 \
-    --reverse \
-    --border=rounded \
-    --border-label=" #${selected_iid} " \
-    --color="border:magenta,header:dim,prompt:magenta" \
-    <<< "$work_options" \
-    || echo "")
-
-  if [[ -z "$work_action" ]]; then
-    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
-    exit 0
-  fi
-
-  # ─── Branch ───
-  if [[ "$work_action" == *"Branch"* ]]; then
-    if [[ -n "$existing_branch" ]]; then
-      echo ""
-      echo "  ${YELLOW}${ICON_WARN}${RESET} Branch ${BOLD}${existing_branch}${RESET} already exists for this issue."
-      echo ""
-      echo -n "  ${BOLD}Check out existing branch?${RESET} ${DIM}(y/n)${RESET} "
-      read -r do_checkout
-
-      if [[ "$do_checkout" == "y" ]]; then
-        checkout_err=$(git checkout "$existing_branch" 2>&1)
-        checkout_rc=$?
-        if [[ $checkout_rc -ne 0 ]]; then
-          checkout_err=$(git checkout -b "$existing_branch" "origin/$existing_branch" 2>&1)
-          checkout_rc=$?
-        fi
-        if [[ $checkout_rc -eq 0 ]]; then
-          echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${existing_branch}${RESET}"
-        else
-          echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
-          echo "  ${DIM}${checkout_err}${RESET}"
-        fi
-      fi
-      echo ""
-    else
-      offer_branch_creation "$selected_iid" "$selected_title"
-    fi
-
-  # ─── Edit description ───
-  elif [[ "$work_action" == *"description"* ]]; then
-    echo ""
-    echo -n "  ${DIM}Fetching current description...${RESET}"
-    current_desc=$(glab issue view "$selected_iid" --output json 2>/dev/null | jq -r '.description // ""')
-    printf "\r                                        \r"
-
-    tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
-    trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
-    cat > "$tmpfile" <<< "$current_desc"
-
-    echo "  ${DIM}Opening editor... (save & quit to update, :cq to abort)${RESET}"
-    echo ""
-
-    open_editor "$tmpfile"
-    if [[ $? -ne 0 ]]; then
-      echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
-      exit 0
-    fi
-
-    new_desc=$(cat "$tmpfile")
-    if [[ "$new_desc" == "$current_desc" ]]; then
-      echo "  ${DIM}No changes made.${RESET}"
-    else
-      echo -n "  ${DIM}Updating description...${RESET}"
-      glab issue update "$selected_iid" -d "$new_desc" &>/dev/null && {
-        printf "\r                                \r"
-        echo "  ${GREEN}${ICON_OK}${RESET} Description updated"
-      } || {
-        printf "\r                                \r"
-        echo "  ${RED}${ICON_WARN}${RESET} Failed to update description"
-      }
-    fi
-    echo ""
-
-  # ─── Edit labels ───
-  elif [[ "$work_action" == *"labels"* ]]; then
-    echo ""
-    echo -n "  ${DIM}Fetching labels...${RESET}"
-    current_labels=$(jq -r '.labels // [] | join(",")' <<< "$selected_issue_json")
-    all_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r 'sort_by(.name) | .[].name' 2>/dev/null || echo "")
-    printf "\r                                \r"
-
-    if [[ -n "$current_labels" ]]; then
-      echo "  ${DIM}Current:${RESET} ${current_labels}"
-      echo ""
-    fi
-
-    selected_labels=$(fzf \
-      --multi \
-      --prompt="  Labels > " \
-      --header="  TAB=multi-select  ENTER=confirm  ESC=keep current" \
+    work_action=$(fzf \
+      --prompt="  Action > " \
+      --header="  ENTER=select  ESC=done" \
       --height=~40 \
       --reverse \
       --border=rounded \
-      --border-label=" labels " \
+      --border-label=" #${selected_iid} " \
       --color="border:magenta,header:dim,prompt:magenta" \
-      <<< "$all_labels" \
+      <<< "$work_options" \
       || echo "")
 
-    if [[ -n "$selected_labels" ]]; then
-      new_labels=""
-      while IFS= read -r lbl; do
-        [[ -z "$lbl" ]] && continue
-        if [[ -n "$new_labels" ]]; then
-          new_labels="${new_labels},${lbl}"
-        else
-          new_labels="$lbl"
+    if [[ -z "$work_action" ]]; then
+      echo "  ${DIM}Done.${RESET}"
+      break
+    fi
+
+    # ─── Branch ───
+    if [[ "$work_action" == *"Branch"* ]]; then
+      if [[ -n "$existing_branch" ]]; then
+        echo ""
+        echo "  ${YELLOW}${ICON_WARN}${RESET} Branch ${BOLD}${existing_branch}${RESET} already exists for this issue."
+        echo ""
+        echo -n "  ${BOLD}Check out existing branch?${RESET} ${DIM}(y/n)${RESET} "
+        read -r do_checkout
+
+        if [[ "$do_checkout" == "y" ]]; then
+          checkout_err=$(git checkout "$existing_branch" 2>&1)
+          checkout_rc=$?
+          if [[ $checkout_rc -ne 0 ]]; then
+            checkout_err=$(git checkout -b "$existing_branch" "origin/$existing_branch" 2>&1)
+            checkout_rc=$?
+          fi
+          if [[ $checkout_rc -eq 0 ]]; then
+            echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${existing_branch}${RESET}"
+          else
+            echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
+            echo "  ${DIM}${checkout_err}${RESET}"
+          fi
         fi
-      done <<< "$selected_labels"
+        echo ""
+      else
+        offer_branch_creation "$selected_iid" "$selected_title"
+      fi
+      break
 
-      glab issue update "$selected_iid" -l "$new_labels" &>/dev/null && {
-        echo "  ${GREEN}${ICON_OK}${RESET} Labels updated to ${DIM}${new_labels}${RESET}"
-      } || {
-        echo "  ${RED}${ICON_WARN}${RESET} Failed to update labels"
-      }
-    else
-      echo "  ${DIM}No changes made.${RESET}"
-    fi
-    echo ""
-
-  # ─── Edit assignee ───
-  elif [[ "$work_action" == *"assignee"* ]]; then
-    echo ""
-    echo -n "  ${DIM}Fetching members...${RESET}"
-    current_assignees=$(jq -r '.assignees // [] | map(.username) | join(", ")' <<< "$selected_issue_json")
-    members_json=$(glab api "projects/$project_id/members/all?per_page=100" 2>/dev/null) || members_json="[]"
-    if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
-      members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
-    else
-      members=""
-    fi
-    printf "\r                                \r"
-
-    if [[ -n "$current_assignees" ]]; then
-      echo "  ${DIM}Current:${RESET} ${current_assignees}"
+    # ─── Edit description ───
+    elif [[ "$work_action" == *"description"* ]]; then
       echo ""
-    fi
+      echo -n "  ${DIM}Fetching current description...${RESET}"
+      current_desc=$(glab issue view "$selected_iid" --output json 2>/dev/null | jq -r '.description // ""')
+      printf "\r                                        \r"
 
-    if [[ -n "$members" ]]; then
-      member_options="  Unassign
+      tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
+      trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
+      cat > "$tmpfile" <<< "$current_desc"
+
+      echo "  ${DIM}Opening editor... (save & quit to update, :cq to cancel)${RESET}"
+      echo ""
+
+      open_editor "$tmpfile"
+      if [[ $? -ne 0 ]]; then
+        echo "  ${YELLOW}${ICON_WARN}${RESET} Cancelled."
+      else
+        new_desc=$(cat "$tmpfile")
+        if [[ "$new_desc" == "$current_desc" ]]; then
+          echo "  ${DIM}No changes made.${RESET}"
+        else
+          echo -n "  ${DIM}Updating description...${RESET}"
+          glab issue update "$selected_iid" -d "$new_desc" &>/dev/null && {
+            printf "\r                                \r"
+            echo "  ${GREEN}${ICON_OK}${RESET} Description updated"
+          } || {
+            printf "\r                                \r"
+            echo "  ${RED}${ICON_WARN}${RESET} Failed to update description"
+          }
+        fi
+      fi
+
+    # ─── Edit labels ───
+    elif [[ "$work_action" == *"labels"* ]]; then
+      echo ""
+      echo -n "  ${DIM}Fetching labels...${RESET}"
+      current_labels=$(jq -r '.labels // [] | join(",")' <<< "$selected_issue_json")
+      all_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r 'sort_by(.name) | .[].name' 2>/dev/null || echo "")
+      printf "\r                                \r"
+
+      if [[ -n "$current_labels" ]]; then
+        echo "  ${DIM}Current:${RESET} ${current_labels}"
+        echo ""
+      fi
+
+      selected_labels=$(fzf \
+        --multi \
+        --prompt="  Labels > " \
+        --header="  TAB=multi-select  ENTER=confirm  ESC=keep current" \
+        --height=~40 \
+        --reverse \
+        --border=rounded \
+        --border-label=" labels " \
+        --color="border:magenta,header:dim,prompt:magenta" \
+        <<< "$all_labels" \
+        || echo "")
+
+      if [[ -n "$selected_labels" ]]; then
+        new_labels=""
+        while IFS= read -r lbl; do
+          [[ -z "$lbl" ]] && continue
+          if [[ -n "$new_labels" ]]; then
+            new_labels="${new_labels},${lbl}"
+          else
+            new_labels="$lbl"
+          fi
+        done <<< "$selected_labels"
+
+        glab issue update "$selected_iid" -l "$new_labels" &>/dev/null && {
+          echo "  ${GREEN}${ICON_OK}${RESET} Labels updated to ${DIM}${new_labels}${RESET}"
+        } || {
+          echo "  ${RED}${ICON_WARN}${RESET} Failed to update labels"
+        }
+      else
+        echo "  ${DIM}No changes made.${RESET}"
+      fi
+
+    # ─── Edit assignee ───
+    elif [[ "$work_action" == *"assignee"* ]]; then
+      echo ""
+      echo -n "  ${DIM}Fetching members...${RESET}"
+      current_assignees=$(jq -r '.assignees // [] | map(.username) | join(", ")' <<< "$selected_issue_json")
+      members_json=$(glab api "projects/$project_id/members/all?per_page=100" 2>/dev/null) || members_json="[]"
+      if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
+        members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
+      else
+        members=""
+      fi
+      printf "\r                                \r"
+
+      if [[ -n "$current_assignees" ]]; then
+        echo "  ${DIM}Current:${RESET} ${current_assignees}"
+        echo ""
+      fi
+
+      if [[ -n "$members" ]]; then
+        member_options="  Unassign
 ${members}"
 
-      selected_member=$(fzf \
-        --prompt="  Assignee > " \
+        selected_member=$(fzf \
+          --prompt="  Assignee > " \
+          --header="  ENTER=select  ESC=keep current" \
+          --height=~40 \
+          --reverse \
+          --border=rounded \
+          --border-label=" assignee " \
+          --color="border:magenta,header:dim,prompt:magenta" \
+          <<< "$member_options" \
+          || echo "")
+
+        if [[ -z "$selected_member" ]]; then
+          echo "  ${DIM}No changes made.${RESET}"
+        elif [[ "$selected_member" == *"Unassign"* ]]; then
+          glab issue update "$selected_iid" -a "" &>/dev/null && {
+            echo "  ${GREEN}${ICON_OK}${RESET} Assignee removed"
+          } || {
+            echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
+          }
+        else
+          new_assignee=$(awk '{print $1}' <<< "$selected_member")
+          glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null && {
+            echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
+          } || {
+            echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
+          }
+        fi
+      else
+        echo -n "  ${ICON_NEW} Username (leave empty to skip): "
+        read -r new_assignee
+        if [[ -n "$new_assignee" ]]; then
+          glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null && {
+            echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
+          } || {
+            echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
+          }
+        fi
+      fi
+
+    # ─── Edit milestone ───
+    elif [[ "$work_action" == *"milestone"* ]]; then
+      echo ""
+      echo -n "  ${DIM}Fetching milestones...${RESET}"
+      current_ms=$(jq -r '.milestone.title // "none"' <<< "$selected_issue_json")
+      ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+      if jq -e 'type == "array"' <<< "$ms_json" &>/dev/null; then
+        milestones=$(jq -r '.[].title // empty' <<< "$ms_json" 2>/dev/null)
+      else
+        milestones=""
+      fi
+      printf "\r                                \r"
+
+      echo "  ${DIM}Current:${RESET} ${current_ms}"
+      echo ""
+
+      ms_options="  Remove milestone
+${milestones}"
+
+      selected_ms=$(fzf \
+        --prompt="  Milestone > " \
         --header="  ENTER=select  ESC=keep current" \
         --height=~40 \
         --reverse \
         --border=rounded \
-        --border-label=" assignee " \
+        --border-label=" milestone " \
         --color="border:magenta,header:dim,prompt:magenta" \
-        <<< "$member_options" \
+        <<< "$ms_options" \
         || echo "")
 
-      if [[ -z "$selected_member" ]]; then
+      if [[ -z "$selected_ms" ]]; then
         echo "  ${DIM}No changes made.${RESET}"
-      elif [[ "$selected_member" == *"Unassign"* ]]; then
-        glab issue update "$selected_iid" -a "" &>/dev/null && {
-          echo "  ${GREEN}${ICON_OK}${RESET} Assignee removed"
+      elif [[ "$selected_ms" == *"Remove"* ]]; then
+        glab issue update "$selected_iid" -m "" &>/dev/null && {
+          echo "  ${GREEN}${ICON_OK}${RESET} Milestone removed"
         } || {
-          echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
+          echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
         }
       else
-        new_assignee=$(awk '{print $1}' <<< "$selected_member")
-        glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null && {
-          echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
+        glab issue update "$selected_iid" -m "$selected_ms" &>/dev/null && {
+          echo "  ${GREEN}${ICON_OK}${RESET} Milestone set to ${DIM}${selected_ms}${RESET}"
         } || {
-          echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
+          echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
         }
       fi
-    else
-      echo -n "  ${ICON_NEW} Username (leave empty to skip): "
-      read -r new_assignee
-      if [[ -n "$new_assignee" ]]; then
-        glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null && {
-          echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
+
+    # ─── Close issue ───
+    elif [[ "$work_action" == *"Close"* ]]; then
+      echo ""
+      echo -n "  ${BOLD}Close issue #${selected_iid}?${RESET} ${DIM}(y/n)${RESET} "
+      read -r confirm_close
+      if [[ "$confirm_close" == "y" ]]; then
+        glab issue close "$selected_iid" &>/dev/null && {
+          echo "  ${GREEN}${ICON_OK}${RESET} Issue #${selected_iid} closed"
         } || {
-          echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
+          echo "  ${RED}${ICON_WARN}${RESET} Failed to close issue"
         }
+      else
+        echo "  ${DIM}Cancelled.${RESET}"
       fi
+      break
     fi
-    echo ""
-
-  # ─── Edit milestone ───
-  elif [[ "$work_action" == *"milestone"* ]]; then
-    echo ""
-    echo -n "  ${DIM}Fetching milestones...${RESET}"
-    current_ms=$(jq -r '.milestone.title // "none"' <<< "$selected_issue_json")
-    ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
-    if jq -e 'type == "array"' <<< "$ms_json" &>/dev/null; then
-      milestones=$(jq -r '.[].title // empty' <<< "$ms_json" 2>/dev/null)
-    else
-      milestones=""
-    fi
-    printf "\r                                \r"
-
-    echo "  ${DIM}Current:${RESET} ${current_ms}"
-    echo ""
-
-    ms_options="  Remove milestone
-${milestones}"
-
-    selected_ms=$(fzf \
-      --prompt="  Milestone > " \
-      --header="  ENTER=select  ESC=keep current" \
-      --height=~40 \
-      --reverse \
-      --border=rounded \
-      --border-label=" milestone " \
-      --color="border:magenta,header:dim,prompt:magenta" \
-      <<< "$ms_options" \
-      || echo "")
-
-    if [[ -z "$selected_ms" ]]; then
-      echo "  ${DIM}No changes made.${RESET}"
-    elif [[ "$selected_ms" == *"Remove"* ]]; then
-      glab issue update "$selected_iid" -m "" &>/dev/null && {
-        echo "  ${GREEN}${ICON_OK}${RESET} Milestone removed"
-      } || {
-        echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
-      }
-    else
-      glab issue update "$selected_iid" -m "$selected_ms" &>/dev/null && {
-        echo "  ${GREEN}${ICON_OK}${RESET} Milestone set to ${DIM}${selected_ms}${RESET}"
-      } || {
-        echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
-      }
-    fi
-    echo ""
-
-  # ─── Close issue ───
-  elif [[ "$work_action" == *"Close"* ]]; then
-    echo ""
-    echo -n "  ${BOLD}Close issue #${selected_iid}?${RESET} ${DIM}(y/n)${RESET} "
-    read -r confirm_close
-    if [[ "$confirm_close" == "y" ]]; then
-      glab issue close "$selected_iid" &>/dev/null && {
-        echo "  ${GREEN}${ICON_OK}${RESET} Issue #${selected_iid} closed"
-      } || {
-        echo "  ${RED}${ICON_WARN}${RESET} Failed to close issue"
-      }
-    else
-      echo "  ${DIM}Cancelled.${RESET}"
-    fi
-    echo ""
-  fi
+  done
 
   exit 0
 
