@@ -368,29 +368,11 @@ fetch_jira_stories() {
   return 0
 }
 
-# ─── DEBUG: Test Jira fetch (remove later) ───
-if $JIRA_AVAILABLE; then
-  echo -n "  ${DIM}Fetching Jira stories...${RESET}"
-  if fetch_jira_stories; then
-    printf "\r                                      \r"
-    echo "  ${GREEN}${ICON_OK}${RESET} Found ${BOLD}${JIRA_STORIES_COUNT}${RESET} Jira stories"
-    echo ""
-    jq -r '.[] | "  [\(.key)] \(.fields.summary)  (${DIM}\(.fields.status.name)${RESET})"' <<< "$JIRA_STORIES_JSON"
-    echo ""
-  else
-    printf "\r                                      \r"
-    echo "  ${RED}${ICON_WARN}${RESET} Failed to fetch Jira stories"
-    echo ""
-  fi
-  echo "  ${DIM}── DEBUG END ──${RESET}"
-  echo ""
-fi
-
 # ═══════════════════════════════════════════
 # MAIN MENU
 # ═══════════════════════════════════════════
 
-menu_options="▸ Create new issue
+menu_options="${ICON_NEW} Create issue
 ${ICON_BRANCH} Work on existing issue"
 
 action=$(fzf \
@@ -407,13 +389,12 @@ action=$(fzf \
 if [[ -z "$action" ]]; then
   echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
   exit 0
-fi
 
 # ═══════════════════════════════════════════════════════════════
 # PATH: WORK ON EXISTING ISSUE
 # ═══════════════════════════════════════════════════════════════
 
-if [[ "$action" == *"Work on existing"* ]]; then
+elif [[ "$action" == *"Work on existing"* ]]; then
 
   echo ""
   echo -n "  ${DIM}Fetching issues and branches...${RESET}"
@@ -522,11 +503,251 @@ if [[ "$action" == *"Work on existing"* ]]; then
   fi
 
   exit 0
-fi
 
 # ═══════════════════════════════════════════════════════════════
-# PATH: CREATE NEW ISSUE
+# PATH: CREATE ISSUE
 # ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Create"* ]]; then
+
+  # Sub-menu: From Jira or Manual?
+  create_mode="manual"
+  if $JIRA_AVAILABLE; then
+    create_options="${ICON_TITLE} From Jira
+${ICON_NEW} Manual"
+
+    create_action=$(fzf \
+      --prompt="  Create issue > " \
+      --header="  ENTER=select  ESC=cancel" \
+      --height=~40 \
+      --reverse \
+      --border=rounded \
+      --border-label=" create issue " \
+      --color="border:cyan,header:dim,prompt:cyan" \
+      <<< "$create_options" \
+      || echo "")
+
+    if [[ -z "$create_action" ]]; then
+      echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+      exit 0
+    fi
+
+    if [[ "$create_action" == *"From Jira"* ]]; then
+      create_mode="jira"
+    fi
+  fi
+
+  # ─────────────────────────────────────────
+  # FROM JIRA
+  # ─────────────────────────────────────────
+  if [[ "$create_mode" == "jira" ]]; then
+
+    echo ""
+    echo -n "  ${DIM}Fetching Jira stories...${RESET}"
+
+    if ! fetch_jira_stories; then
+      printf "\r                                      \r"
+      echo ""
+      echo "  ${RED}${ICON_WARN}${RESET} Could not connect to Jira."
+      echo "  ${DIM}Check VPN/Wireguard connection.${RESET}"
+      echo ""
+      echo -n "  ${BOLD}Create a local issue instead?${RESET} ${DIM}(y/n)${RESET} "
+      read -r fallback_choice
+      if [[ "$fallback_choice" == "y" ]]; then
+        create_mode="manual"
+      else
+        exit 0
+      fi
+    fi
+  fi
+
+  if [[ "$create_mode" == "jira" ]]; then
+
+    printf "\r                                      \r"
+
+    # Fetch existing GitLab issues to find already-synced stories
+    echo -n "  ${DIM}Checking synced issues...${RESET}"
+    gl_issues_json=$(glab issue list --output json -P 100 2>/dev/null || echo "[]")
+    synced_keys=$(jq -r '.[] | .title' <<< "$gl_issues_json" | grep -oE '\[[A-Z]+-[0-9]+\]' | tr -d '[]')
+    printf "\r                                      \r"
+
+    # Filter out already-synced stories
+    unsynced_json=$(jq --arg synced "$synced_keys" '
+      ($synced | split("\n") | map(select(length > 0))) as $keys |
+      map(select(.key as $k | ($keys | index($k)) | not))
+    ' <<< "$JIRA_STORIES_JSON")
+    unsynced_count=$(jq 'length' <<< "$unsynced_json")
+
+    if [[ "$unsynced_count" -eq 0 ]]; then
+      echo ""
+      echo "  ${DIM}All Jira stories are already synced to GitLab.${RESET}"
+      echo ""
+      exit 0
+    fi
+
+    # Build fzf list
+    story_list=""
+    while IFS= read -r line; do
+      skey=$(jq -r '.key' <<< "$line")
+      stitle=$(jq -r '.fields.summary' <<< "$line")
+      sstatus=$(jq -r '.fields.status.name' <<< "$line")
+      sprio=$(jq -r '.fields.priority.name' <<< "$line")
+      story_list+="  ${skey}  ${stitle}  ${DIM}(${sstatus} | ${sprio})${RESET}"$'\n'
+    done < <(jq -c '.[]' <<< "$unsynced_json")
+    story_list="${story_list%$'\n'}"
+
+    echo ""
+    echo "  ${MAGENTA}${ICON_TITLE}${RESET} ${BOLD}Unsynced Jira Stories${RESET} ${DIM}(${unsynced_count} stories)${RESET}"
+    echo ""
+
+    selected_story=$(fzf \
+      --prompt="  Story > " \
+      --header="  ENTER=select  ESC=cancel" \
+      --height=~40 \
+      --reverse \
+      --border=rounded \
+      --border-label=" jira stories " \
+      --color="border:magenta,header:dim,prompt:magenta" \
+      --ansi \
+      <<< "$story_list" \
+      || echo "")
+
+    if [[ -z "$selected_story" ]]; then
+      echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+      exit 0
+    fi
+
+    # Parse selected Jira key
+    selected_jira_key=$(grep -oE '[A-Z]+-[0-9]+' <<< "$selected_story" | head -1)
+    selected_story_json=$(jq --arg key "$selected_jira_key" '.[] | select(.key == $key)' <<< "$unsynced_json")
+
+    # Extract fields
+    jira_summary=$(jq -r '.fields.summary' <<< "$selected_story_json")
+    jira_description=$(jq -r '.fields.description // ""' <<< "$selected_story_json")
+    jira_priority=$(jq -r '.fields.priority.name // ""' <<< "$selected_story_json")
+    jira_labels_json=$(jq -r '.fields.labels // []' <<< "$selected_story_json")
+    jira_epic_key=$(jq -r '.fields.customfield_10000 // ""' <<< "$selected_story_json")
+    jira_subtasks_json=$(jq '.fields.subtasks // []' <<< "$selected_story_json")
+
+    # Build title
+    title="[${selected_jira_key}] ${jira_summary}"
+
+    # Build description with subtasks as checkboxes
+    description="$jira_description"
+    subtask_count=$(jq 'length' <<< "$jira_subtasks_json")
+    if [[ "$subtask_count" -gt 0 ]]; then
+      description="${description}
+
+## Subtasks"
+      while IFS= read -r st; do
+        st_key=$(jq -r '.key' <<< "$st")
+        st_summary=$(jq -r '.fields.summary' <<< "$st")
+        description="${description}
+- [ ] ${st_key}: ${st_summary}"
+      done < <(jq -c '.[]' <<< "$jira_subtasks_json")
+    fi
+
+    # Build labels CSV (Jira labels + priority)
+    labels_csv=$(jq -r 'join(",")' <<< "$jira_labels_json")
+    if [[ -n "$jira_priority" ]]; then
+      labels_csv="${labels_csv},prio::${jira_priority}"
+    fi
+
+    # Ensure labels exist in GitLab
+    echo ""
+    echo -n "  ${DIM}Syncing labels...${RESET}"
+    existing_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r '.[].name' 2>/dev/null || echo "")
+    IFS=',' read -rA label_array <<< "$labels_csv"
+    for lbl in "${label_array[@]}"; do
+      if ! grep -qxF "$lbl" <<< "$existing_labels"; then
+        glab label create -n "$lbl" &>/dev/null && \
+          existing_labels="${existing_labels}\n${lbl}"
+      fi
+    done
+    printf "\r                                      \r"
+
+    # Handle milestone from Epic
+    milestone=""
+    if [[ -n "$jira_epic_key" && "$jira_epic_key" != "null" ]]; then
+      echo -n "  ${DIM}Syncing milestone from epic...${RESET}"
+      # Fetch epic title from Jira
+      epic_response=$(curl -s \
+        -H "Authorization: Bearer ${JIRA_TOKEN}" \
+        "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary")
+      epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_response")
+
+      if [[ -n "$epic_title" ]]; then
+        # Check if milestone already exists
+        ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+        existing_ms=$(jq -r --arg t "$epic_title" '.[] | select(.title == $t) | .title' <<< "$ms_json" 2>/dev/null)
+
+        if [[ -z "$existing_ms" ]]; then
+          glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" &>/dev/null
+        fi
+        milestone="$epic_title"
+      fi
+      printf "\r                                      \r"
+    fi
+
+    # Show summary
+    echo "  ${GREEN}${ICON_OK}${RESET} Ready to create issue:"
+    echo ""
+    echo "  ${ICON_TITLE} ${BOLD}${title}${RESET}"
+    echo "  ${ICON_LABEL} ${DIM}${labels_csv}${RESET}"
+    echo "  ${ICON_MILE} ${DIM}${milestone:-none}${RESET}"
+    if [[ "$subtask_count" -gt 0 ]]; then
+      echo "  ${ICON_DESC} ${DIM}${subtask_count} subtasks${RESET}"
+    fi
+    echo ""
+
+    echo -n "  ${BOLD}Create this issue?${RESET} ${DIM}(y/n)${RESET} "
+    read -r confirm
+    if [[ "$confirm" != "y" ]]; then
+      echo ""
+      echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+      exit 0
+    fi
+
+    # Create the issue
+    cmd=(glab issue create -t "$title" -d "$description")
+    if [[ -n "$labels_csv" ]]; then
+      cmd+=(-l "$labels_csv")
+    fi
+    if [[ -n "$milestone" ]]; then
+      cmd+=(-m "$milestone")
+    fi
+
+    echo ""
+    echo -n "  ${DIM}Creating issue...${RESET}"
+    output=$("${cmd[@]}" 2>&1)
+    create_status=$?
+    printf "\r                       \r"
+
+    if [[ $create_status -eq 0 ]]; then
+      echo ""
+      echo "  ${GREEN}${ICON_OK} Issue created successfully${RESET}"
+      echo "  ${DIM}${output}${RESET}"
+      echo ""
+
+      # Offer branch creation
+      issue_number=$(grep -oE '/issues/[0-9]+' <<< "$output" | grep -oE '[0-9]+' | tail -1)
+      if [[ -n "$issue_number" ]]; then
+        offer_branch_creation "$issue_number" "$jira_summary"
+      fi
+    else
+      echo ""
+      echo "  ${RED}${ICON_WARN} Failed to create issue${RESET}"
+      echo "  ${DIM}${output}${RESET}"
+      echo ""
+      exit 1
+    fi
+
+    exit 0
+  fi
+
+  # ─────────────────────────────────────────
+  # MANUAL
+  # ─────────────────────────────────────────
 
 echo ""
 echo -n "  ${DIM}Fetching project data...${RESET}"
@@ -956,4 +1177,6 @@ issue_number=$(grep -oE '/issues/[0-9]+' <<< "$output" | grep -oE '[0-9]+' | tai
 
 if [[ -n "$issue_number" ]]; then
   offer_branch_creation "$issue_number" "$title"
+fi
+
 fi
