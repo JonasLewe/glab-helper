@@ -1006,7 +1006,7 @@ ${lbl}"
         extra_labels=$(fzf \
           --multi \
           --prompt="  Labels > " \
-          --header="  TAB=multi-select  ENTER=confirm  ESC=skip" \
+          --header="  TAB=multi-select  ENTER=confirm  ESC=none" \
           --height=~40 \
           --reverse \
           --border=rounded \
@@ -1029,7 +1029,7 @@ ${lbl}"
     # ─── Assignee ───
     echo ""
     hr
-    echo "  ${MAGENTA}${ICON_USER}${RESET} ${BOLD}Assignee${RESET} ${DIM}(ENTER=confirm, ESC=skip)${RESET}"
+    echo "  ${MAGENTA}${ICON_USER}${RESET} ${BOLD}Assignee${RESET} ${DIM}(ENTER=confirm, ESC=abort)${RESET}"
     echo ""
 
     assignee=""
@@ -1041,18 +1041,28 @@ ${lbl}"
     fi
 
     if [[ -n "$members" ]]; then
+      member_options="  Skip (no assignee)
+${members}"
+
       selected_member=$(fzf \
         --prompt="  Assignee > " \
-        --header="  ENTER=select  ESC=skip" \
+        --header="  ENTER=select  ESC=abort" \
         --height=~40 \
         --reverse \
         --border=rounded \
         --border-label=" members " \
         --color="border:magenta,header:dim,prompt:magenta" \
-        <<< "$members" \
+        <<< "$member_options" \
         || echo "")
 
-      if [[ -n "$selected_member" ]]; then
+      if [[ -z "$selected_member" ]]; then
+        echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+        exit 0
+      fi
+
+      if grep -q "Skip (no assignee)" <<< "$selected_member"; then
+        assignee=""
+      elif [[ -n "$selected_member" ]]; then
         assignee=$(awk '{print $1}' <<< "$selected_member")
       fi
     else
@@ -1211,7 +1221,7 @@ fi
 # ═══════════════════════════════════════════
 echo ""
 hr
-echo "  ${MAGENTA}${ICON_LABEL}${RESET} ${BOLD}Labels${RESET} ${DIM}(TAB=select, ENTER=confirm, ESC=skip)${RESET}"
+echo "  ${MAGENTA}${ICON_LABEL}${RESET} ${BOLD}Labels${RESET} ${DIM}(TAB=select, ENTER=confirm, ESC=abort)${RESET}"
 echo ""
 
 # Suggest example labels if none exist
@@ -1227,16 +1237,18 @@ fi
 labels_csv=""
 label_loop=true
 while $label_loop; do
-  label_options="${ICON_NEW} Create new label..."
+  label_options="  Skip (no labels)
+${ICON_NEW} Create new label..."
   if [[ -n "$all_labels" ]]; then
-    label_options="${ICON_NEW} Create new label...
+    label_options="  Skip (no labels)
+${ICON_NEW} Create new label...
 ${all_labels}"
   fi
 
   selected_labels=$(fzf \
     --multi \
     --prompt="  Labels > " \
-    --header="  TAB=multi-select  ENTER=confirm  ESC=skip" \
+    --header="  TAB=multi-select  ENTER=confirm  ESC=abort" \
     --height=~40 \
     --reverse \
     --border=rounded \
@@ -1244,6 +1256,11 @@ ${all_labels}"
     --color="border:magenta,header:dim,prompt:magenta" \
     <<< "$label_options" \
     || echo "")
+
+  if [[ -z "$selected_labels" ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+    exit 0
+  fi
 
   if grep -q "Create new label" <<< "$selected_labels"; then
     echo ""
@@ -1267,9 +1284,9 @@ ${all_labels}"
       echo ""
     fi
   else
-    selected_labels=$(grep -v "Create new label" <<< "$selected_labels" || echo "")
+    # Remove Skip and Create entries from selection
+    selected_labels=$(grep -v -e "Create new label" -e "Skip (no labels)" <<< "$selected_labels" || echo "")
     if [[ -n "$selected_labels" ]]; then
-      # Quote each label to handle labels containing commas
       labels_csv=""
       while IFS= read -r lbl; do
         [[ -z "$lbl" ]] && continue
@@ -1295,17 +1312,18 @@ fi
 # ═══════════════════════════════════════════
 echo ""
 hr
-echo "  ${MAGENTA}${ICON_USER}${RESET} ${BOLD}Assignee${RESET} ${DIM}(ENTER=confirm, ESC=skip)${RESET}"
+echo "  ${MAGENTA}${ICON_USER}${RESET} ${BOLD}Assignee${RESET} ${DIM}(ENTER=confirm, ESC=abort)${RESET}"
 echo ""
 
 assignee=""
 if [[ -n "$members" ]]; then
-  member_options="${ICON_NEW} Enter manually...
+  member_options="  Skip (no assignee)
+${ICON_NEW} Enter manually...
 ${members}"
 
   selected_member=$(fzf \
     --prompt="  Assignee > " \
-    --header="  ENTER=select  ESC=skip" \
+    --header="  ENTER=select  ESC=abort" \
     --height=~40 \
     --reverse \
     --border=rounded \
@@ -1314,9 +1332,16 @@ ${members}"
     <<< "$member_options" \
     || echo "")
 
+  if [[ -z "$selected_member" ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+    exit 0
+  fi
+
   if grep -q "Enter manually" <<< "$selected_member"; then
     echo -n "  ${ICON_NEW} Username: "
     read -r assignee
+  elif grep -q "Skip (no assignee)" <<< "$selected_member"; then
+    assignee=""
   elif [[ -n "$selected_member" ]]; then
     assignee=$(awk '{print $1}' <<< "$selected_member")
   fi
@@ -1336,7 +1361,7 @@ fi
 # ═══════════════════════════════════════════
 echo ""
 hr
-echo "  ${MAGENTA}${ICON_MILE}${RESET} ${BOLD}Milestone${RESET} ${DIM}(ENTER=confirm, ESC=skip)${RESET}"
+echo "  ${MAGENTA}${ICON_MILE}${RESET} ${BOLD}Milestone${RESET} ${DIM}(ENTER=confirm, ESC=abort)${RESET}"
 echo ""
 
 milestone=""
@@ -1350,7 +1375,7 @@ fi
 
 selected_ms=$(fzf \
   --prompt="  Milestone > " \
-  --header="  ENTER=select  ESC=skip" \
+  --header="  ENTER=select  ESC=abort" \
   --height=~40 \
   --reverse \
   --border=rounded \
@@ -1358,6 +1383,11 @@ selected_ms=$(fzf \
   --color="border:magenta,header:dim,prompt:magenta" \
   <<< "$ms_options" \
   || echo "")
+
+if [[ -z "$selected_ms" ]]; then
+  echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+  exit 0
+fi
 
 if grep -q "Create new milestone" <<< "$selected_ms"; then
   echo ""
