@@ -523,7 +523,7 @@ sync_epics() {
   echo "  ${BOLD}Preview${RESET}"
   echo ""
   echo "  ${GREEN}${ICON_NEW}${RESET} ${#new_epics[@]} milestones to create:"
-  for i in "${!new_epics[@]}"; do
+  for (( i=1; i<=${#new_epics[@]}; i++ )); do
     echo "    ${new_epics[$i]} ${DIM}(${new_epic_keys[$i]})${RESET}"
   done
   if [[ $skipped -gt 0 ]]; then
@@ -545,7 +545,7 @@ sync_epics() {
 
   # Create milestones
   local created=0 failed=0
-  for i in "${!new_epics[@]}"; do
+  for (( i=1; i<=${#new_epics[@]}; i++ )); do
     local ms_title="${new_epics[$i]}"
     if glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title" &>/dev/null; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title}"
@@ -622,22 +622,17 @@ sync_stories() {
   done <<< "$epic_keys_list"
   printf "\r                                      \r"
 
-  # Ensure milestones exist
+  # Check which milestones need creation
   local ms_json existing_ms_titles
   ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
   existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
 
-  local ms_created=0
-  for ek et in "${(@kv)epic_titles}"; do
-    if ! grep -qxF "$et" <<< "$existing_ms_titles"; then
-      if glab api "projects/$project_id/milestones" -X POST -f "title=$et" &>/dev/null; then
-        ((ms_created++))
-      fi
+  local -a new_ms_keys=()
+  for ek in "${(@k)epic_titles}"; do
+    if ! grep -qxF "${epic_titles[$ek]}" <<< "$existing_ms_titles"; then
+      new_ms_keys+=("$ek")
     fi
   done
-  if [[ $ms_created -gt 0 ]]; then
-    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${ms_created} milestones created${RESET}"
-  fi
 
   # Dry-run preview
   echo ""
@@ -645,6 +640,9 @@ sync_stories() {
   echo ""
   echo "  ${BOLD}Preview${RESET}"
   echo ""
+  if [[ ${#new_ms_keys[@]} -gt 0 ]]; then
+    echo "  ${ICON_MILE} ${#new_ms_keys[@]} milestones to create"
+  fi
   echo "  ${GREEN}${ICON_NEW}${RESET} ${unsynced_count} issues to create:"
   while IFS= read -r line; do
     local skey stitle
@@ -668,6 +666,17 @@ sync_stories() {
   fi
 
   echo ""
+
+  # Create missing milestones
+  local ms_created=0
+  for ek in "${new_ms_keys[@]}"; do
+    if glab api "projects/$project_id/milestones" -X POST -f "title=${epic_titles[$ek]}" &>/dev/null; then
+      ((ms_created++))
+    fi
+  done
+  if [[ $ms_created -gt 0 ]]; then
+    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${ms_created} milestones created${RESET}"
+  fi
 
   # Ensure all needed labels exist in GitLab
   echo -n "  ${DIM}Syncing labels...${RESET}"
