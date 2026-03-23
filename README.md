@@ -6,6 +6,8 @@ Interactive GitLab workflow helper for the terminal. Create issues, pick up exis
 
 - **Create issues from Jira** — sync User Stories from Jira Data Center to GitLab issues (one-way)
 - **Create issues manually** — title, labels, assignee, milestone, description (opens your editor)
+- **Bulk sync epics** — import all Jira Epics as GitLab Milestones in one go
+- **Bulk sync stories** — import all unsynced Jira User Stories as GitLab Issues (labels, priority, subtasks, milestone — no manual interaction)
 - **Work on existing issues** — browse open issues, see which already have branches
 - **Branch management** — auto-generate branch names from issues, pick any base branch, checkout
 - **Label & milestone creation** — create new labels and milestones inline, or auto-sync from Jira
@@ -85,6 +87,14 @@ Browse all open issues with fzf. Issues that already have a branch are marked. A
 - **Close issue** — close the issue on GitLab
 
 The menu loops after each action so you can make multiple changes in one session. Press ESC to exit.
+
+### Sync epics from Jira
+
+Bulk-imports all Jira Epics (filtered by board labels) as GitLab Milestones. Shows a dry-run preview before creating anything. Already existing milestones are skipped.
+
+### Sync stories from Jira
+
+Bulk-imports all unsynced Jira User Stories as GitLab Issues. Each issue gets the converted description, labels, priority label, subtasks as checkboxes, and milestone (from Epic). No assignee is set and no editor review — fully automatic. Missing milestones and labels are created on the fly. Shows a dry-run preview with confirmation.
 
 ### Branch creation
 

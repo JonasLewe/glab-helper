@@ -56,6 +56,7 @@ ICON_MILE="▷"
 ICON_DESC="¶"
 ICON_NEW="+"
 ICON_BRANCH="⎇"
+ICON_SYNC="⟳"
 
 BOX="${CYAN}${BOLD}"
 BOX_V="${BOX}│${RESET}"
@@ -403,12 +404,382 @@ fetch_jira_stories() {
   return 0
 }
 
+# Fetch Jira epics that match the board labels (with pagination)
+# Sets JIRA_EPICS_JSON / JIRA_EPICS_COUNT
+fetch_jira_epics() {
+  local labels_jql start_at=0 max_results=100 total=-1
+  local page_response all_issues="[]"
+
+  labels_jql="labels in (${JIRA_BOARD_LABELS}) AND issuetype = Epic"
+
+  while true; do
+    page_response=$(curl -s \
+      -H "Authorization: Bearer ${JIRA_TOKEN}" \
+      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,status")
+
+    if [[ $? -ne 0 ]] || ! jq -e '.issues' <<< "$page_response" &>/dev/null; then
+      return 1
+    fi
+
+    all_issues=$(jq -s '.[0] + .[1]' <<< "${all_issues}"$'\n'"$(jq '.issues' <<< "$page_response")")
+    total=$(jq -r '.total' <<< "$page_response")
+    start_at=$((start_at + max_results))
+
+    [[ $start_at -ge $total ]] && break
+  done
+
+  JIRA_EPICS_JSON="$all_issues"
+  JIRA_EPICS_COUNT=$(jq 'length' <<< "$JIRA_EPICS_JSON")
+  return 0
+}
+
+# Fetch Jira stories with pagination (for bulk sync)
+# Sets JIRA_STORIES_JSON / JIRA_STORIES_COUNT
+fetch_jira_stories_paginated() {
+  local labels_jql start_at=0 max_results=100 total=-1
+  local page_response all_issues="[]"
+
+  labels_jql="labels in (${JIRA_BOARD_LABELS}) AND issuetype = Story"
+
+  while true; do
+    page_response=$(curl -s \
+      -H "Authorization: Bearer ${JIRA_TOKEN}" \
+      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,description,status,priority,labels,issuetype,customfield_10000,subtasks")
+
+    if [[ $? -ne 0 ]] || ! jq -e '.issues' <<< "$page_response" &>/dev/null; then
+      return 1
+    fi
+
+    all_issues=$(jq -s '.[0] + .[1]' <<< "${all_issues}"$'\n'"$(jq '.issues' <<< "$page_response")")
+    total=$(jq -r '.total' <<< "$page_response")
+    start_at=$((start_at + max_results))
+
+    [[ $start_at -ge $total ]] && break
+  done
+
+  JIRA_STORIES_JSON="$all_issues"
+  JIRA_STORIES_COUNT=$(jq 'length' <<< "$JIRA_STORIES_JSON")
+  return 0
+}
+
+# ─── Sync epics from Jira → GitLab milestones ───
+sync_epics() {
+  echo ""
+  echo "  ${MAGENTA}${ICON_SYNC}${RESET} ${BOLD}Sync Epics from Jira${RESET}"
+  echo ""
+
+  # Fetch epics
+  echo -n "  ${DIM}Fetching Jira epics...${RESET}"
+  if ! fetch_jira_epics; then
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Could not connect to Jira."
+    echo "  ${DIM}Check VPN/Wireguard connection.${RESET}"
+    echo ""
+    return 1
+  fi
+  printf "\r                                      \r"
+  echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${JIRA_EPICS_COUNT} epics fetched from Jira${RESET}"
+
+  if [[ "$JIRA_EPICS_COUNT" -eq 0 ]]; then
+    echo "  ${DIM}No epics found matching board labels.${RESET}"
+    echo ""
+    return 0
+  fi
+
+  # Fetch existing milestones
+  echo -n "  ${DIM}Checking existing milestones...${RESET}"
+  local ms_json existing_ms_titles
+  ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+  existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
+  printf "\r                                      \r"
+
+  # Classify epics
+  local -a new_epics=()
+  local -a new_epic_keys=()
+  local skipped=0
+
+  while IFS= read -r epic; do
+    local ekey etitle
+    ekey=$(jq -r '.key' <<< "$epic")
+    etitle=$(jq -r '.fields.summary' <<< "$epic")
+    if grep -qxF "$etitle" <<< "$existing_ms_titles"; then
+      ((skipped++))
+    else
+      new_epics+=("$etitle")
+      new_epic_keys+=("$ekey")
+    fi
+  done < <(jq -c '.[]' <<< "$JIRA_EPICS_JSON")
+
+  if [[ ${#new_epics[@]} -eq 0 ]]; then
+    echo "  ${DIM}All ${JIRA_EPICS_COUNT} epics already exist as milestones.${RESET}"
+    echo ""
+    return 0
+  fi
+
+  # Dry-run preview
+  echo ""
+  hr
+  echo ""
+  echo "  ${BOLD}Preview${RESET}"
+  echo ""
+  echo "  ${GREEN}${ICON_NEW}${RESET} ${#new_epics[@]} milestones to create:"
+  for i in "${!new_epics[@]}"; do
+    echo "    ${new_epics[$i]} ${DIM}(${new_epic_keys[$i]})${RESET}"
+  done
+  if [[ $skipped -gt 0 ]]; then
+    echo "  ${DIM}${skipped} already exist${RESET}"
+  fi
+  echo ""
+  hr
+  echo ""
+
+  echo -n "  ${BOLD}Proceed?${RESET} ${DIM}(y/n)${RESET} "
+  read -r confirm
+  if [[ "$confirm" != "y" ]]; then
+    echo ""
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+    return 0
+  fi
+
+  echo ""
+
+  # Create milestones
+  local created=0 failed=0
+  for i in "${!new_epics[@]}"; do
+    local ms_title="${new_epics[$i]}"
+    if glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title" &>/dev/null; then
+      echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title}"
+      ((created++))
+    else
+      echo "  ${RED}${ICON_WARN}${RESET} ${ms_title} ${DIM}— failed${RESET}"
+      ((failed++))
+    fi
+  done
+
+  # Summary
+  echo ""
+  hr
+  echo ""
+  echo "  ${BOLD}Sync Complete${RESET}"
+  echo ""
+  echo "  ${ICON_MILE} Milestones: ${GREEN}${created} created${RESET}, ${DIM}${skipped} existed${RESET}, ${RED}${failed} failed${RESET}"
+  echo ""
+}
+
+# ─── Sync stories from Jira → GitLab issues ───
+sync_stories() {
+  echo ""
+  echo "  ${MAGENTA}${ICON_SYNC}${RESET} ${BOLD}Sync Stories from Jira${RESET}"
+  echo ""
+
+  # Fetch stories (paginated)
+  echo -n "  ${DIM}Fetching Jira stories...${RESET}"
+  if ! fetch_jira_stories_paginated; then
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Could not connect to Jira."
+    echo "  ${DIM}Check VPN/Wireguard connection.${RESET}"
+    echo ""
+    return 1
+  fi
+  printf "\r                                      \r"
+  echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${JIRA_STORIES_COUNT} stories fetched from Jira${RESET}"
+
+  # Fetch existing GitLab issues to find already-synced keys
+  echo -n "  ${DIM}Checking synced issues...${RESET}"
+  local gl_issues_json synced_keys
+  gl_issues_json=$(glab issue list --output json -P 100 2>/dev/null || echo "[]")
+  synced_keys=$(jq -r '.[].title' <<< "$gl_issues_json" | grep -oE '\[[A-Z]+-[0-9]+\]' | tr -d '[]')
+  printf "\r                                      \r"
+
+  # Filter unsynced stories
+  local unsynced_json unsynced_count
+  unsynced_json=$(jq --arg synced "$synced_keys" '
+    ($synced | split("\n") | map(select(length > 0))) as $keys |
+    map(select(.key as $k | ($keys | index($k)) | not))
+  ' <<< "$JIRA_STORIES_JSON")
+  unsynced_count=$(jq 'length' <<< "$unsynced_json")
+  local issues_skipped=$((JIRA_STORIES_COUNT - unsynced_count))
+
+  if [[ "$unsynced_count" -eq 0 ]]; then
+    echo "  ${DIM}All ${JIRA_STORIES_COUNT} stories are already synced.${RESET}"
+    echo ""
+    return 0
+  fi
+
+  # Resolve epic keys for milestone assignment
+  echo -n "  ${DIM}Resolving epics...${RESET}"
+  typeset -A epic_titles
+  local epic_keys_list
+  epic_keys_list=$(jq -r '[.[].fields.customfield_10000 // empty] | unique | map(select(. != "null" and length > 0)) | .[]' <<< "$unsynced_json")
+
+  while IFS= read -r epic_key; do
+    [[ -z "$epic_key" ]] && continue
+    local epic_resp epic_title
+    epic_resp=$(curl -s -H "Authorization: Bearer ${JIRA_TOKEN}" \
+      "${JIRA_URL}/rest/api/2/issue/${epic_key}?fields=summary")
+    epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_resp")
+    [[ -n "$epic_title" ]] && epic_titles[$epic_key]="$epic_title"
+  done <<< "$epic_keys_list"
+  printf "\r                                      \r"
+
+  # Ensure milestones exist
+  local ms_json existing_ms_titles
+  ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+  existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
+
+  local ms_created=0
+  for ek et in "${(@kv)epic_titles}"; do
+    if ! grep -qxF "$et" <<< "$existing_ms_titles"; then
+      if glab api "projects/$project_id/milestones" -X POST -f "title=$et" &>/dev/null; then
+        ((ms_created++))
+      fi
+    fi
+  done
+  if [[ $ms_created -gt 0 ]]; then
+    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${ms_created} milestones created${RESET}"
+  fi
+
+  # Dry-run preview
+  echo ""
+  hr
+  echo ""
+  echo "  ${BOLD}Preview${RESET}"
+  echo ""
+  echo "  ${GREEN}${ICON_NEW}${RESET} ${unsynced_count} issues to create:"
+  while IFS= read -r line; do
+    local skey stitle
+    skey=$(jq -r '.key' <<< "$line")
+    stitle=$(jq -r '.fields.summary' <<< "$line")
+    echo "    [${skey}] ${stitle}"
+  done < <(jq -c '.[]' <<< "$unsynced_json")
+  if [[ $issues_skipped -gt 0 ]]; then
+    echo "  ${DIM}${issues_skipped} already synced${RESET}"
+  fi
+  echo ""
+  hr
+  echo ""
+
+  echo -n "  ${BOLD}Proceed?${RESET} ${DIM}(y/n)${RESET} "
+  read -r confirm
+  if [[ "$confirm" != "y" ]]; then
+    echo ""
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+    return 0
+  fi
+
+  echo ""
+
+  # Ensure all needed labels exist in GitLab
+  echo -n "  ${DIM}Syncing labels...${RESET}"
+  local existing_labels
+  existing_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r '.[].name' 2>/dev/null || echo "")
+  local all_needed_labels
+  all_needed_labels=$(jq -r '
+    ([.[].fields.labels[]?] | unique) +
+    ([.[].fields.priority.name // empty] | unique | map("prio::" + .))
+    | unique | .[]
+  ' <<< "$unsynced_json")
+
+  while IFS= read -r lbl; do
+    [[ -z "$lbl" ]] && continue
+    if ! grep -qxF "$lbl" <<< "$existing_labels"; then
+      glab label create -n "$lbl" &>/dev/null && existing_labels="${existing_labels}"$'\n'"${lbl}"
+    fi
+  done <<< "$all_needed_labels"
+  printf "\r                                      \r"
+
+  # Create issues
+  echo "  ${DIM}Creating issues...${RESET}"
+  echo ""
+
+  local created=0 failed=0
+  while IFS= read -r story; do
+    local s_key s_summary s_desc s_priority s_labels_json s_epic_key s_subtasks_json
+    s_key=$(jq -r '.key' <<< "$story")
+    s_summary=$(jq -r '.fields.summary' <<< "$story")
+    s_desc=$(jq -r '.fields.description // ""' <<< "$story")
+    s_priority=$(jq -r '.fields.priority.name // ""' <<< "$story")
+    s_labels_json=$(jq '.fields.labels // []' <<< "$story")
+    s_epic_key=$(jq -r '.fields.customfield_10000 // ""' <<< "$story")
+    s_subtasks_json=$(jq '.fields.subtasks // []' <<< "$story")
+
+    # Title
+    local s_title="[${s_key}] ${s_summary}"
+
+    # Description
+    local s_description
+    s_description=$(jira_to_markdown "$s_desc")
+
+    # Subtasks as checkboxes
+    local st_count
+    st_count=$(jq 'length' <<< "$s_subtasks_json")
+    if [[ "$st_count" -gt 0 ]]; then
+      s_description="${s_description}"$'\n\n'"## Subtasks"
+      while IFS= read -r st; do
+        local st_key st_summary
+        st_key=$(jq -r '.key' <<< "$st")
+        st_summary=$(jq -r '.fields.summary' <<< "$st")
+        s_description="${s_description}"$'\n'"- [ ] ${st_key}: ${st_summary}"
+      done < <(jq -c '.[]' <<< "$s_subtasks_json")
+    fi
+
+    # Labels
+    local s_labels_csv
+    s_labels_csv=$(jq -r 'join(",")' <<< "$s_labels_json")
+    if [[ -n "$s_priority" ]]; then
+      if [[ -n "$s_labels_csv" ]]; then
+        s_labels_csv="${s_labels_csv},prio::${s_priority}"
+      else
+        s_labels_csv="prio::${s_priority}"
+      fi
+    fi
+
+    # Milestone from epic
+    local s_milestone=""
+    if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
+      s_milestone="${epic_titles[$s_epic_key]:-}"
+    fi
+
+    # Build command
+    local cmd=(glab issue create -t "$s_title" -d "$s_description")
+    [[ -n "$s_labels_csv" ]] && cmd+=(-l "$s_labels_csv")
+    [[ -n "$s_milestone" ]] && cmd+=(-m "$s_milestone")
+
+    local output
+    output=$("${cmd[@]}" 2>&1)
+    if [[ $? -eq 0 ]]; then
+      echo "  ${GREEN}${ICON_OK}${RESET} [${s_key}] ${s_summary}"
+      ((created++))
+    else
+      echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— ${output}${RESET}"
+      ((failed++))
+    fi
+  done < <(jq -c '.[]' <<< "$unsynced_json")
+
+  # Summary
+  echo ""
+  hr
+  echo ""
+  echo "  ${BOLD}Sync Complete${RESET}"
+  echo ""
+  echo "  ${ICON_TITLE} Issues:     ${GREEN}${created} created${RESET}, ${DIM}${issues_skipped} synced${RESET}, ${RED}${failed} failed${RESET}"
+  if [[ $ms_created -gt 0 ]]; then
+    echo "  ${ICON_MILE} Milestones: ${GREEN}${ms_created} created${RESET}"
+  fi
+  echo ""
+}
+
 # ═══════════════════════════════════════════
 # MAIN MENU
 # ═══════════════════════════════════════════
 
 menu_options="${ICON_NEW} Create issue
 ${ICON_TITLE} Work on existing issue"
+if $JIRA_AVAILABLE; then
+  menu_options="${menu_options}
+${ICON_SYNC} Sync epics from Jira
+${ICON_SYNC} Sync stories from Jira"
+fi
 
 action=$(fzf \
   --prompt="  What do you want to do? > " \
@@ -1621,5 +1992,21 @@ issue_number=$(grep -oE '/issues/[0-9]+' <<< "$output" | grep -oE '[0-9]+' | tai
 if [[ -n "$issue_number" ]]; then
   offer_branch_creation "$issue_number" "$title"
 fi
+
+# ═══════════════════════════════════════════════════════════════
+# PATH: SYNC EPICS FROM JIRA
+# ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Sync epics"* ]]; then
+  sync_epics
+  exit 0
+
+# ═══════════════════════════════════════════════════════════════
+# PATH: SYNC STORIES FROM JIRA
+# ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Sync stories"* ]]; then
+  sync_stories
+  exit 0
 
 fi
