@@ -9,7 +9,7 @@
 #   ./install.sh
 #
 # What it does:
-#   1. Installs dependencies (glab, fzf, jq) via brew/pacman
+#   1. Installs dependencies (glab, fzf, jq, curl) via brew/pacman
 #   2. Symlinks src/glab-helper → ~/.local/bin/glab-helper
 
 set -e
@@ -32,7 +32,7 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
 fi
 
 # ─── Install dependencies ───
-deps=(glab fzf jq)
+deps=(glab fzf jq curl)
 missing=()
 
 for cmd in "${deps[@]}"; do
