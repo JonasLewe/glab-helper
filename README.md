@@ -36,7 +36,23 @@ export PATH="$HOME/.local/bin:$PATH"
 glab auth login
 ```
 
-Choose your GitLab instance, authenticate with a personal access token (scopes: `api`, `read_repository`, `write_repository`), and verify with `glab auth status`.
+You'll be prompted for:
+
+1. **GitLab instance URL** — e.g. `https://gitlab.company.com`
+2. **Authentication method** — choose `Token`
+3. **Access token** — create one in GitLab under Settings > Access Tokens with scopes:
+   - `api` (full API access)
+   - `read_repository`
+   - `write_repository`
+4. **Git protocol** — `HTTPS` (or `SSH` if you have keys configured)
+
+Verify with:
+
+```bash
+glab auth status
+```
+
+This should show your GitLab instance and username. The token is stored locally by glab and used by glab-helper automatically.
 
 ## Usage
 
