@@ -64,7 +64,7 @@ hr() { echo "  ${DIM}───────────────────�
 
 # ─── Dependency check ───
 missing=()
-for cmd in glab fzf jq; do
+for cmd in glab fzf jq curl; do
   if ! command -v "$cmd" &>/dev/null; then
     missing+=("$cmd")
   fi
@@ -281,6 +281,30 @@ ${branch_list}"
 # Use --clean / -u NONE to prevent custom keymaps (e.g. kj→<Esc>) and plugins
 # from interfering with the editing session. noswapfile prevents recovery prompts
 # from stale swap files on re-runs.
+# Convert Jira wiki markup to GitLab Markdown
+jira_to_markdown() {
+  local text="$1"
+  # Remove carriage returns
+  text=$(tr -d '\r' <<< "$text")
+  # Bold: *text* -> **text** (but not ** which is already markdown)
+  text=$(sed 's/\*\([^*]\{1,\}\)\*/*\*\1\**/g' <<< "$text")
+  # Italic: _text_ -> *text* (only at word boundaries, not mid-word like my_var_name)
+  text=$(sed 's/\(^\|[[:space:]]\)_\([^_]\{1,\}\)_\([[:space:]].*\|$\)/\1*\2*\3/g' <<< "$text")
+  # Headings: h1. -> #, h2. -> ##, etc. (multiline)
+  text=$(sed 's/^h1\.\s*/# /;s/^h2\.\s*/## /;s/^h3\.\s*/### /;s/^h4\.\s*/#### /' <<< "$text")
+  # Ordered lists: # item -> 1. item (Jira uses # for ordered)
+  text=$(sed 's/^#\s\+/1. /' <<< "$text")
+  # Links: [text|url] -> [text](url)
+  text=$(sed 's/\[\([^|]*\)|\([^]]*\)\]/[\1](\2)/g' <<< "$text")
+  # Code blocks: {code}...{code} -> ```...```
+  text=$(sed 's/{code\(:[^}]*\)\?}/```/g' <<< "$text")
+  # Noformat: {noformat} -> ```
+  text=$(sed 's/{noformat}/```/g' <<< "$text")
+  # Monospace: {{text}} -> `text`
+  text=$(sed 's/{{\([^}]*\)}}/`\1`/g' <<< "$text")
+  echo "$text"
+}
+
 open_editor() {
   if command -v nvim &>/dev/null; then
     nvim --clean \
@@ -643,8 +667,9 @@ ${ICON_NEW} Manual"
     # Build title
     title="[${selected_jira_key}] ${jira_summary}"
 
-    # Build description with subtasks as checkboxes
-    description="$jira_description"
+    description=$(jira_to_markdown "$jira_description")
+
+    # Append subtasks as checkboxes
     subtask_count=$(jq 'length' <<< "$jira_subtasks_json")
     if [[ "$subtask_count" -gt 0 ]]; then
       description="${description}
@@ -658,56 +683,188 @@ ${ICON_NEW} Manual"
       done < <(jq -c '.[]' <<< "$jira_subtasks_json")
     fi
 
-    # Build labels CSV (Jira labels + priority)
+    # ─── Open editor for description review ───
+    echo ""
+    hr
+    echo "  ${MAGENTA}${ICON_DESC}${RESET} ${BOLD}Description${RESET} ${DIM}(from Jira, review and edit)${RESET}"
+    echo ""
+
+    tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
+    trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
+    cat > "$tmpfile" <<< "$description"
+
+    echo "  ${DIM}Opening editor... (save & quit to continue, :cq to abort)${RESET}"
+    echo ""
+
+    open_editor "$tmpfile"
+    editor_status=$?
+
+    if [[ $editor_status -ne 0 ]]; then
+      echo ""
+      echo "  ${YELLOW}${ICON_WARN}${RESET} Editor exited with error. Aborting."
+      exit 1
+    fi
+
+    if [[ ! -f "$tmpfile" ]]; then
+      echo ""
+      echo "  ${RED}${ICON_WARN}${RESET} Description file was lost. Aborting."
+      exit 1
+    fi
+
+    description=$(cat "$tmpfile")
+    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}Description updated${RESET}"
+
+    # ─── Labels (Jira labels pre-selected + option to add more) ───
+    echo ""
+    hr
+    echo "  ${MAGENTA}${ICON_LABEL}${RESET} ${BOLD}Labels${RESET}"
+    echo ""
+
+    # Build labels CSV from Jira
     labels_csv=$(jq -r 'join(",")' <<< "$jira_labels_json")
     if [[ -n "$jira_priority" ]]; then
       labels_csv="${labels_csv},prio::${jira_priority}"
     fi
 
-    # Ensure labels exist in GitLab
+    echo "  ${DIM}From Jira:${RESET} ${labels_csv}"
     echo ""
+
+    # Ensure Jira labels exist in GitLab
     echo -n "  ${DIM}Syncing labels...${RESET}"
     existing_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r '.[].name' 2>/dev/null || echo "")
     IFS=',' read -rA label_array <<< "$labels_csv"
     for lbl in "${label_array[@]}"; do
       if ! grep -qxF "$lbl" <<< "$existing_labels"; then
         glab label create -n "$lbl" &>/dev/null && \
-          existing_labels="${existing_labels}\n${lbl}"
+          existing_labels="${existing_labels}
+${lbl}"
       fi
     done
     printf "\r                                      \r"
 
-    # Handle milestone from Epic
+    # Offer to add more labels
+    all_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r 'sort_by(.name) | .[].name' 2>/dev/null || echo "")
+    # Remove already-selected labels from the list
+    available_labels=""
+    while IFS= read -r lbl; do
+      [[ -z "$lbl" ]] && continue
+      if ! grep -qxF "$lbl" <<< "$(tr ',' '\n' <<< "$labels_csv")"; then
+        available_labels+="${lbl}"$'\n'
+      fi
+    done <<< "$all_labels"
+    available_labels="${available_labels%$'\n'}"
+
+    if [[ -n "$available_labels" ]]; then
+      echo -n "  ${BOLD}Add more labels?${RESET} ${DIM}(y/n)${RESET} "
+      read -r want_more_labels
+      if [[ "$want_more_labels" == "y" ]]; then
+        echo ""
+        extra_labels=$(fzf \
+          --multi \
+          --prompt="  Labels > " \
+          --header="  TAB=multi-select  ENTER=confirm  ESC=skip" \
+          --height=~40 \
+          --reverse \
+          --border=rounded \
+          --border-label=" additional labels " \
+          --color="border:magenta,header:dim,prompt:magenta" \
+          <<< "$available_labels" \
+          || echo "")
+
+        if [[ -n "$extra_labels" ]]; then
+          while IFS= read -r lbl; do
+            [[ -z "$lbl" ]] && continue
+            labels_csv="${labels_csv},${lbl}"
+          done <<< "$extra_labels"
+        fi
+      fi
+    fi
+
+    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${labels_csv}${RESET}"
+
+    # ─── Assignee ───
+    echo ""
+    hr
+    echo "  ${MAGENTA}${ICON_USER}${RESET} ${BOLD}Assignee${RESET} ${DIM}(ENTER=confirm, ESC=skip)${RESET}"
+    echo ""
+
+    assignee=""
+    members_json=$(glab api "projects/$project_id/members/all?per_page=100" 2>/dev/null) || members_json="[]"
+    if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
+      members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
+    else
+      members=""
+    fi
+
+    if [[ -n "$members" ]]; then
+      selected_member=$(fzf \
+        --prompt="  Assignee > " \
+        --header="  ENTER=select  ESC=skip" \
+        --height=~40 \
+        --reverse \
+        --border=rounded \
+        --border-label=" members " \
+        --color="border:magenta,header:dim,prompt:magenta" \
+        <<< "$members" \
+        || echo "")
+
+      if [[ -n "$selected_member" ]]; then
+        assignee=$(awk '{print $1}' <<< "$selected_member")
+      fi
+    else
+      echo -n "  ${ICON_NEW} Username (leave empty to skip): "
+      read -r assignee
+    fi
+
+    if [[ -n "$assignee" ]]; then
+      echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${assignee}${RESET}"
+    else
+      echo "  ${DIM}  none${RESET}"
+    fi
+
+    # ─── Milestone from Epic ───
+    echo ""
+    hr
+    echo "  ${MAGENTA}${ICON_MILE}${RESET} ${BOLD}Milestone${RESET}"
+    echo ""
+
     milestone=""
     if [[ -n "$jira_epic_key" && "$jira_epic_key" != "null" ]]; then
-      echo -n "  ${DIM}Syncing milestone from epic...${RESET}"
-      # Fetch epic title from Jira
+      echo -n "  ${DIM}Fetching epic from Jira...${RESET}"
       epic_response=$(curl -s \
         -H "Authorization: Bearer ${JIRA_TOKEN}" \
         "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary")
       epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_response")
+      printf "\r                                      \r"
 
       if [[ -n "$epic_title" ]]; then
-        # Check if milestone already exists
         ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
         existing_ms=$(jq -r --arg t "$epic_title" '.[] | select(.title == $t) | .title' <<< "$ms_json" 2>/dev/null)
 
         if [[ -z "$existing_ms" ]]; then
           glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" &>/dev/null
+          echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} created from epic ${DIM}${jira_epic_key}${RESET}"
+        else
+          echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(already exists)${RESET}"
         fi
         milestone="$epic_title"
       fi
-      printf "\r                                      \r"
+    else
+      echo "  ${DIM}  no epic linked${RESET}"
     fi
 
-    # Show summary
-    echo "  ${GREEN}${ICON_OK}${RESET} Ready to create issue:"
+    # ─── Summary & Confirm ───
     echo ""
-    echo "  ${ICON_TITLE} ${BOLD}${title}${RESET}"
-    echo "  ${ICON_LABEL} ${DIM}${labels_csv}${RESET}"
-    echo "  ${ICON_MILE} ${DIM}${milestone:-none}${RESET}"
+    hr
+    echo ""
+    echo "  ${BOLD}Summary${RESET}"
+    echo ""
+    echo "  ${ICON_TITLE} Title:     ${BOLD}${title}${RESET}"
+    echo "  ${ICON_LABEL} Labels:    ${DIM}${labels_csv}${RESET}"
+    echo "  ${ICON_USER} Assignee:  ${DIM}${assignee:-none}${RESET}"
+    echo "  ${ICON_MILE} Milestone: ${DIM}${milestone:-none}${RESET}"
     if [[ "$subtask_count" -gt 0 ]]; then
-      echo "  ${ICON_DESC} ${DIM}${subtask_count} subtasks${RESET}"
+      echo "  ${ICON_DESC} Subtasks:  ${DIM}${subtask_count}${RESET}"
     fi
     echo ""
 
@@ -719,10 +876,13 @@ ${ICON_NEW} Manual"
       exit 0
     fi
 
-    # Create the issue
+    # ─── Create the issue ───
     cmd=(glab issue create -t "$title" -d "$description")
     if [[ -n "$labels_csv" ]]; then
       cmd+=(-l "$labels_csv")
+    fi
+    if [[ -n "$assignee" ]]; then
+      cmd+=(-a "$assignee")
     fi
     if [[ -n "$milestone" ]]; then
       cmd+=(-m "$milestone")
