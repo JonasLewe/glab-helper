@@ -316,12 +316,12 @@ jira_to_markdown() {
   text=$(sed 's/{noformat}/```/g' <<< "$text")
   # Strip Jira macros: {panel}, {color}, {quote}
   text=$(sed -E 's/\{panel(:[^}]*)?\}//g;s/\{color(:[^}]*)?\}//g;s/\{quote\}//g' <<< "$text")
-  # Ensure blank lines around headings for proper Markdown rendering
-  text=$(sed -E '/^#{1,4} /{
-    i\
-
-    G
-  }' <<< "$text" | sed -E '1{/^$/d;}')
+  # Ensure blank lines between paragraphs for Markdown rendering
+  # (Jira single newlines are visible breaks; Markdown needs blank lines)
+  # Skips lines inside code blocks to preserve formatting
+  text=$(awk '!code && NR>1 && /^./ && prev ~ /^./ {print ""}
+             /^```/{code=!code}
+             {print; prev=$0}' <<< "$text")
   echo "$text"
 }
 
