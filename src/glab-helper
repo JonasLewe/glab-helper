@@ -25,11 +25,20 @@
 # ─────────────────────────────────────────────────────────────
 
 # ─── Help flag ───
+TESTING=false
+if [[ "$1" == "--test" || "$1" == "-t" ]]; then
+  TESTING=true
+  shift
+fi
+
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo ""
   echo "  glab-helper — Interactive GitLab workflow helper"
   echo ""
-  echo "  Usage: glab-helper"
+  echo "  Usage: glab-helper [--test]"
+  echo ""
+  echo "  Options:"
+  echo "    --test, -t  Skip Jira target project check (for testing)"
   echo ""
   echo "  Run from any cloned GitLab repo. Requires: glab, fzf, jq"
   echo "  Authenticate first: glab auth login"
@@ -364,7 +373,7 @@ load_jira_config() {
   fi
   JIRA_TARGET_PROJECT=$(jq -r '.value' <<< "$var_target")
 
-  if [[ "$repo_name" != "$JIRA_TARGET_PROJECT" ]]; then
+  if ! $TESTING && [[ "$repo_name" != "$JIRA_TARGET_PROJECT" ]]; then
     return 1
   fi
 
