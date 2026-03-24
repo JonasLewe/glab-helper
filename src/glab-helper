@@ -872,6 +872,10 @@ if $JIRA_AVAILABLE; then
 ${ICON_SYNC} Sync epics from Jira
 ${ICON_SYNC} Sync stories from Jira"
 fi
+if $TESTING; then
+  menu_options="${menu_options}
+${ICON_WARN} Reset: delete all issues & milestones"
+fi
 
 action=$(fzf \
   --prompt="  What do you want to do? > " \
@@ -2102,6 +2106,63 @@ elif [[ "$action" == *"Sync epics"* ]]; then
 
 elif [[ "$action" == *"Sync stories"* ]]; then
   sync_stories
+  exit 0
+
+# ═══════════════════════════════════════════════════════════════
+# PATH: RESET (test mode only)
+# ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Reset"* ]]; then
+  echo ""
+  echo "  ${RED}${ICON_WARN}${RESET} ${BOLD}Reset: delete all issues & milestones${RESET}"
+  echo ""
+
+  # Count issues and milestones
+  echo -n "  ${DIM}Counting...${RESET}"
+  issues_json=$(glab api "projects/$project_id/issues?state=opened&per_page=100" 2>/dev/null || echo "[]")
+  issue_count=$(jq 'length' <<< "$issues_json")
+  ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+  ms_count=$(jq 'length' <<< "$ms_json")
+  printf "\r                          \r"
+
+  if [[ "$issue_count" -eq 0 && "$ms_count" -eq 0 ]]; then
+    echo "  ${DIM}Nothing to delete.${RESET}"
+    echo ""
+    exit 0
+  fi
+
+  echo "  ${RED}${issue_count}${RESET} open issues and ${RED}${ms_count}${RESET} active milestones will be deleted."
+  echo ""
+  echo -n "  ${BOLD}Type '${RED}delete${RESET}${BOLD}' to confirm:${RESET} "
+  read -r confirm
+  if [[ "$confirm" != "delete" ]]; then
+    echo ""
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
+    exit 0
+  fi
+
+  echo ""
+
+  # Delete issues
+  local del_issues=0
+  while IFS= read -r iid; do
+    [[ -z "$iid" ]] && continue
+    if glab api "projects/$project_id/issues/$iid" -X DELETE &>/dev/null; then
+      ((del_issues++))
+    fi
+  done < <(jq -r '.[].iid' <<< "$issues_json")
+
+  # Delete milestones
+  local del_ms=0
+  while IFS= read -r mid; do
+    [[ -z "$mid" ]] && continue
+    if glab api "projects/$project_id/milestones/$mid" -X DELETE &>/dev/null; then
+      ((del_ms++))
+    fi
+  done < <(jq -r '.[].id' <<< "$ms_json")
+
+  echo "  ${GREEN}${ICON_OK}${RESET} Deleted ${del_issues} issues, ${del_ms} milestones."
+  echo ""
   exit 0
 
 fi
