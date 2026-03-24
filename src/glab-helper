@@ -509,19 +509,27 @@ sync_epics() {
   existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
   printf "\r                                      \r"
 
-  # Classify epics
+  # Classify epics into new vs existing (to update)
   local -a new_epics=()
   local -a new_epic_keys=()
   local -a new_epic_descs=()
-  local skipped=0
+  local -a update_epics=()
+  local -a update_epic_keys=()
+  local -a update_epic_descs=()
+  local -a update_epic_ms_ids=()
 
   while IFS= read -r epic; do
     local ekey etitle edesc
     ekey=$(jq -r '.key' <<< "$epic")
     etitle=$(jq -r '.fields.summary' <<< "$epic")
     edesc=$(jq -r '.fields.description // ""' <<< "$epic")
-    if grep -qxF "$etitle" <<< "$existing_ms_titles"; then
-      ((skipped++))
+    local ms_id
+    ms_id=$(jq -r --arg t "$etitle" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    if [[ -n "$ms_id" ]]; then
+      update_epics+=("$etitle")
+      update_epic_keys+=("$ekey")
+      update_epic_descs+=("$(jira_to_markdown "$edesc")")
+      update_epic_ms_ids+=("$ms_id")
     else
       new_epics+=("$etitle")
       new_epic_keys+=("$ekey")
@@ -529,8 +537,8 @@ sync_epics() {
     fi
   done < <(jq -c '.[]' <<< "$JIRA_EPICS_JSON")
 
-  if [[ ${#new_epics[@]} -eq 0 ]]; then
-    echo "  ${DIM}All ${JIRA_EPICS_COUNT} epics already exist as milestones.${RESET}"
+  if [[ ${#new_epics[@]} -eq 0 && ${#update_epics[@]} -eq 0 ]]; then
+    echo "  ${DIM}No epics found matching board labels.${RESET}"
     echo ""
     return 0
   fi
@@ -541,12 +549,17 @@ sync_epics() {
   echo ""
   echo "  ${BOLD}Preview${RESET}"
   echo ""
-  echo "  ${GREEN}${ICON_NEW}${RESET} ${#new_epics[@]} milestones to create:"
-  for (( i=1; i<=${#new_epics[@]}; i++ )); do
-    echo "    ${new_epics[$i]} ${DIM}(${new_epic_keys[$i]})${RESET}"
-  done
-  if [[ $skipped -gt 0 ]]; then
-    echo "  ${DIM}${skipped} already exist${RESET}"
+  if [[ ${#new_epics[@]} -gt 0 ]]; then
+    echo "  ${GREEN}${ICON_NEW}${RESET} ${#new_epics[@]} milestones to create:"
+    for (( i=1; i<=${#new_epics[@]}; i++ )); do
+      echo "    ${new_epics[$i]} ${DIM}(${new_epic_keys[$i]})${RESET}"
+    done
+  fi
+  if [[ ${#update_epics[@]} -gt 0 ]]; then
+    echo "  ${ICON_SYNC} ${#update_epics[@]} milestones to update:"
+    for (( i=1; i<=${#update_epics[@]}; i++ )); do
+      echo "    ${update_epics[$i]} ${DIM}(${update_epic_keys[$i]})${RESET}"
+    done
   fi
   echo ""
   hr
@@ -562,18 +575,33 @@ sync_epics() {
 
   echo ""
 
-  # Create milestones
-  local created=0 failed=0
+  # Create new milestones
+  local created=0 updated=0 failed=0
   for (( i=1; i<=${#new_epics[@]}; i++ )); do
     local ms_title="${new_epics[$i]}"
     local ms_desc="${new_epic_descs[$i]}"
     local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
     [[ -n "$ms_desc" ]] && ms_cmd+=(-f "description=$ms_desc")
     if "${ms_cmd[@]}" &>/dev/null; then
-      echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title}"
+      echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(created)${RESET}"
       ((created++))
     else
       echo "  ${RED}${ICON_WARN}${RESET} ${ms_title} ${DIM}— failed${RESET}"
+      ((failed++))
+    fi
+  done
+
+  # Update existing milestones
+  for (( i=1; i<=${#update_epics[@]}; i++ )); do
+    local ms_title="${update_epics[$i]}"
+    local ms_desc="${update_epic_descs[$i]}"
+    local ms_id="${update_epic_ms_ids[$i]}"
+    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "description=$ms_desc")
+    if "${ms_cmd[@]}" &>/dev/null; then
+      echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(updated)${RESET}"
+      ((updated++))
+    else
+      echo "  ${RED}${ICON_WARN}${RESET} ${ms_title} ${DIM}— update failed${RESET}"
       ((failed++))
     fi
   done
@@ -584,7 +612,7 @@ sync_epics() {
   echo ""
   echo "  ${BOLD}Sync Complete${RESET}"
   echo ""
-  echo "  ${ICON_MILE} Milestones: ${GREEN}${created} created${RESET}, ${DIM}${skipped} existed${RESET}, ${RED}${failed} failed${RESET}"
+  echo "  ${ICON_MILE} Milestones: ${GREEN}${created} created${RESET}, ${GREEN}${updated} updated${RESET}, ${RED}${failed} failed${RESET}"
   echo ""
 }
 
@@ -653,8 +681,13 @@ sync_stories() {
   existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
 
   local -a new_ms_keys=()
+  local -a update_ms_keys=()
   for ek in "${(@k)epic_titles}"; do
-    if ! grep -qxF "${epic_titles[$ek]}" <<< "$existing_ms_titles"; then
+    local ms_id
+    ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    if [[ -n "$ms_id" ]]; then
+      update_ms_keys+=("$ek")
+    else
       new_ms_keys+=("$ek")
     fi
   done
@@ -667,6 +700,9 @@ sync_stories() {
   echo ""
   if [[ ${#new_ms_keys[@]} -gt 0 ]]; then
     echo "  ${ICON_MILE} ${#new_ms_keys[@]} milestones to create"
+  fi
+  if [[ ${#update_ms_keys[@]} -gt 0 ]]; then
+    echo "  ${ICON_SYNC} ${#update_ms_keys[@]} milestones to update"
   fi
   echo "  ${GREEN}${ICON_NEW}${RESET} ${unsynced_count} issues to create:"
   while IFS= read -r line; do
@@ -693,7 +729,7 @@ sync_stories() {
   echo ""
 
   # Create missing milestones
-  local ms_created=0
+  local ms_created=0 ms_updated=0
   for ek in "${new_ms_keys[@]}"; do
     local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=${epic_titles[$ek]}")
     [[ -n "${epic_descs[$ek]:-}" ]] && ms_cmd+=(-f "description=${epic_descs[$ek]}")
@@ -701,8 +737,22 @@ sync_stories() {
       ((ms_created++))
     fi
   done
-  if [[ $ms_created -gt 0 ]]; then
-    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${ms_created} milestones created${RESET}"
+
+  # Update existing milestones
+  for ek in "${update_ms_keys[@]}"; do
+    local ms_id
+    ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "description=${epic_descs[$ek]:-}")
+    if "${ms_cmd[@]}" &>/dev/null; then
+      ((ms_updated++))
+    fi
+  done
+
+  if [[ $ms_created -gt 0 || $ms_updated -gt 0 ]]; then
+    local ms_parts=""
+    [[ $ms_created -gt 0 ]] && ms_parts="${ms_created} created"
+    [[ $ms_updated -gt 0 ]] && ms_parts="${ms_parts:+$ms_parts, }${ms_updated} updated"
+    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}Milestones: ${ms_parts}${RESET}"
   fi
 
   # Ensure all needed labels exist in GitLab
@@ -1499,7 +1549,7 @@ ${members}"
 
       if [[ -n "$epic_title" ]]; then
         ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
-        existing_ms=$(jq -r --arg t "$epic_title" '.[] | select(.title == $t) | .title' <<< "$ms_json" 2>/dev/null)
+        existing_ms=$(jq -r --arg t "$epic_title" '[.[] | select(.title == $t)][0] | .title // empty' <<< "$ms_json" 2>/dev/null)
 
         if [[ -z "$existing_ms" ]]; then
           local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title")
