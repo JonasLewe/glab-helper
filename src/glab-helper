@@ -65,7 +65,7 @@ ICON_MILE="▷"
 ICON_DESC="¶"
 ICON_NEW="+"
 ICON_BRANCH="⎇"
-ICON_SYNC="⟳"
+ICON_SYNC="~"
 
 BOX="${CYAN}${BOLD}"
 BOX_V="${BOX}│${RESET}"
