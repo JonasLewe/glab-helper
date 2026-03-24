@@ -11,7 +11,7 @@ Interactive GitLab workflow helper for the terminal. Create issues, pick up exis
 - **Work on existing issues** — browse open issues, see which already have branches
 - **Branch management** — auto-generate branch names from issues, pick any base branch, checkout
 - **Label & milestone creation** — create new labels and milestones inline, or auto-sync from Jira
-- **Jira markup conversion** — bold, italic, headings, links, code blocks converted to Markdown
+- **Jira markup conversion** — bold, italic, headings, ordered/unordered lists (nested), strikethrough, links, code blocks, monospace, and macro stripping converted to Markdown
 - **fzf everywhere** — fuzzy search for issues, labels, members, milestones, branches
 
 ## Install
@@ -61,10 +61,12 @@ This should show your GitLab instance and username. The token is stored locally 
 Run from any cloned GitLab repo:
 
 ```bash
-glab-helper
+glab-helper [--test]
 ```
 
-You'll be presented with two options:
+The `--test` flag skips the Jira target project check, allowing you to test Jira sync features against any repo.
+
+You'll be presented with the following options (Jira options only appear when integration is configured):
 
 ### Create issue
 
@@ -90,11 +92,11 @@ The menu loops after each action so you can make multiple changes in one session
 
 ### Sync epics from Jira
 
-Bulk-imports all Jira Epics (filtered by board labels) as GitLab Milestones. Shows a dry-run preview before creating anything. Already existing milestones are skipped.
+Bulk-imports all Jira Epics (filtered by board labels) as GitLab Milestones. Epic descriptions are converted to Markdown and added as milestone descriptions. Existing milestones are updated with the current Jira description (Jira is source of truth). Shows a dry-run preview with separate create/update counts before proceeding.
 
 ### Sync stories from Jira
 
-Bulk-imports all unsynced Jira User Stories as GitLab Issues. Each issue gets the converted description, labels, priority label, subtasks as checkboxes, and milestone (from Epic). No assignee is set and no editor review — fully automatic. Missing milestones and labels are created on the fly. Shows a dry-run preview with confirmation.
+Bulk-imports all unsynced Jira User Stories as GitLab Issues. Each issue gets the converted description, labels, priority label, subtasks as checkboxes, and milestone (from Epic). No assignee is set and no editor review — fully automatic. Missing milestones and labels are created on the fly, existing milestones are updated with epic descriptions. Shows a dry-run preview with confirmation.
 
 ### Branch creation
 
@@ -130,7 +132,7 @@ Team members need access to the glab-helper project to read the variables.
 | Jira | GitLab |
 |------|--------|
 | User Story | Issue (title prefixed with `[PROJ-123]`) |
-| Epic | Milestone |
+| Epic | Milestone (with description) |
 | Subtasks | Checkboxes in issue description |
 | Labels | Labels (auto-created if missing) |
 | Priority | Label (e.g. `prio::medium`) |
