@@ -431,7 +431,7 @@ fetch_jira_epics() {
   while true; do
     page_response=$(curl -s \
       -H "Authorization: Bearer ${JIRA_TOKEN}" \
-      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,status")
+      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,status,description")
 
     if [[ $? -ne 0 ]] || ! jq -e '.issues' <<< "$page_response" &>/dev/null; then
       return 1
@@ -512,17 +512,20 @@ sync_epics() {
   # Classify epics
   local -a new_epics=()
   local -a new_epic_keys=()
+  local -a new_epic_descs=()
   local skipped=0
 
   while IFS= read -r epic; do
-    local ekey etitle
+    local ekey etitle edesc
     ekey=$(jq -r '.key' <<< "$epic")
     etitle=$(jq -r '.fields.summary' <<< "$epic")
+    edesc=$(jq -r '.fields.description // ""' <<< "$epic")
     if grep -qxF "$etitle" <<< "$existing_ms_titles"; then
       ((skipped++))
     else
       new_epics+=("$etitle")
       new_epic_keys+=("$ekey")
+      new_epic_descs+=("$(jira_to_markdown "$edesc")")
     fi
   done < <(jq -c '.[]' <<< "$JIRA_EPICS_JSON")
 
@@ -563,7 +566,10 @@ sync_epics() {
   local created=0 failed=0
   for (( i=1; i<=${#new_epics[@]}; i++ )); do
     local ms_title="${new_epics[$i]}"
-    if glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title" &>/dev/null; then
+    local ms_desc="${new_epic_descs[$i]}"
+    local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
+    [[ -n "$ms_desc" ]] && ms_cmd+=(-f "description=$ms_desc")
+    if "${ms_cmd[@]}" &>/dev/null; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title}"
       ((created++))
     else
@@ -625,16 +631,19 @@ sync_stories() {
   # Resolve epic keys for milestone assignment
   echo -n "  ${DIM}Resolving epics...${RESET}"
   typeset -A epic_titles
+  typeset -A epic_descs
   local epic_keys_list
   epic_keys_list=$(jq -r '[.[].fields.customfield_10000 // empty] | unique | map(select(. != "null" and length > 0)) | .[]' <<< "$unsynced_json")
 
   while IFS= read -r epic_key; do
     [[ -z "$epic_key" ]] && continue
-    local epic_resp epic_title
+    local epic_resp epic_title epic_desc
     epic_resp=$(curl -s -H "Authorization: Bearer ${JIRA_TOKEN}" \
-      "${JIRA_URL}/rest/api/2/issue/${epic_key}?fields=summary")
+      "${JIRA_URL}/rest/api/2/issue/${epic_key}?fields=summary,description")
     epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_resp")
+    epic_desc=$(jq -r '.fields.description // ""' <<< "$epic_resp")
     [[ -n "$epic_title" ]] && epic_titles[$epic_key]="$epic_title"
+    [[ -n "$epic_desc" ]] && epic_descs[$epic_key]="$(jira_to_markdown "$epic_desc")"
   done <<< "$epic_keys_list"
   printf "\r                                      \r"
 
@@ -686,7 +695,9 @@ sync_stories() {
   # Create missing milestones
   local ms_created=0
   for ek in "${new_ms_keys[@]}"; do
-    if glab api "projects/$project_id/milestones" -X POST -f "title=${epic_titles[$ek]}" &>/dev/null; then
+    local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=${epic_titles[$ek]}")
+    [[ -n "${epic_descs[$ek]:-}" ]] && ms_cmd+=(-f "description=${epic_descs[$ek]}")
+    if "${ms_cmd[@]}" &>/dev/null; then
       ((ms_created++))
     fi
   done
@@ -1481,8 +1492,9 @@ ${members}"
       echo -n "  ${DIM}Fetching epic from Jira...${RESET}"
       epic_response=$(curl -s \
         -H "Authorization: Bearer ${JIRA_TOKEN}" \
-        "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary")
+        "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary,description")
       epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_response")
+      epic_desc=$(jira_to_markdown "$(jq -r '.fields.description // ""' <<< "$epic_response")")
       printf "\r                                      \r"
 
       if [[ -n "$epic_title" ]]; then
@@ -1490,7 +1502,9 @@ ${members}"
         existing_ms=$(jq -r --arg t "$epic_title" '.[] | select(.title == $t) | .title' <<< "$ms_json" 2>/dev/null)
 
         if [[ -z "$existing_ms" ]]; then
-          glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" &>/dev/null
+          local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title")
+          [[ -n "$epic_desc" ]] && ms_cmd+=(-f "description=$epic_desc")
+          "${ms_cmd[@]}" &>/dev/null
           echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} created from epic ${DIM}${jira_epic_key}${RESET}"
         else
           echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(already exists)${RESET}"
