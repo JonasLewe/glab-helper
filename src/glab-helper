@@ -289,26 +289,33 @@ ${branch_list}"
 }
 
 # Convert Jira wiki markup to GitLab Markdown
+# Uses sed -E (extended regex) with [[:space:]] for macOS BSD sed compatibility
 jira_to_markdown() {
   local text="$1"
   # Remove carriage returns
   text=$(tr -d '\r' <<< "$text")
-  # Bold: *text* -> **text** (but not ** which is already markdown)
-  text=$(sed 's/\*\([^*]\{1,\}\)\*/*\*\1\**/g' <<< "$text")
+  # Unordered lists: must run BEFORE bold to prevent * item being mangled
+  text=$(sed -E 's/^\*\*\*[[:space:]]+/      - /;s/^\*\*[[:space:]]+/    - /;s/^\*[[:space:]]+/- /' <<< "$text")
+  # Ordered lists: # item -> 1. item (must run before heading conversion)
+  text=$(sed -E 's/^###[[:space:]]+/      1. /;s/^##[[:space:]]+/    1. /;s/^#[[:space:]]+/1. /' <<< "$text")
+  # Headings: h1. -> #, h2. -> ##, etc.
+  text=$(sed -E 's/^h1\.[[:space:]]*/# /;s/^h2\.[[:space:]]*/## /;s/^h3\.[[:space:]]*/### /;s/^h4\.[[:space:]]*/#### /' <<< "$text")
+  # Bold: *text* -> **text** (safe now that bullet * was converted above)
+  text=$(sed -E 's/\*([^*]+)\*/**\1**/g' <<< "$text")
   # Italic: _text_ -> *text* (only at word boundaries, not mid-word like my_var_name)
-  text=$(sed 's/\(^\|[[:space:]]\)_\([^_]\{1,\}\)_\([[:space:]].*\|$\)/\1*\2*\3/g' <<< "$text")
-  # Ordered lists: # item -> 1. item (Jira uses # for ordered, must run before heading conversion)
-  text=$(sed 's/^#\s\+/1. /' <<< "$text")
-  # Headings: h1. -> #, h2. -> ##, etc. (multiline)
-  text=$(sed 's/^h1\.\s*/# /;s/^h2\.\s*/## /;s/^h3\.\s*/### /;s/^h4\.\s*/#### /' <<< "$text")
+  text=$(sed -E 's/(^|[[:space:]])_([^_]+)_([[:space:]].*|$)/\1*\2*\3/g' <<< "$text")
+  # Strikethrough: -text- -> ~~text~~ (only at word boundaries)
+  text=$(sed -E 's/(^|[[:space:]])-([^- ][^-]*)-([[:space:]]|[,.:;!?)]|$)/\1~~\2~~\3/g' <<< "$text")
   # Links: [text|url] -> [text](url)
-  text=$(sed 's/\[\([^|]*\)|\([^]]*\)\]/[\1](\2)/g' <<< "$text")
+  text=$(sed -E 's/\[([^|]*)\|([^]]*)\]/[\1](\2)/g' <<< "$text")
+  # Monospace: {{text}} -> `text` (must run BEFORE {code} to avoid {{code}} conflict)
+  text=$(sed -E 's/\{\{([^}]*)\}\}/`\1`/g' <<< "$text")
   # Code blocks: {code}...{code} -> ```...```
-  text=$(sed 's/{code\(:[^}]*\)\?}/```/g' <<< "$text")
+  text=$(sed -E 's/\{code(:[^}]*)?\}/```/g' <<< "$text")
   # Noformat: {noformat} -> ```
   text=$(sed 's/{noformat}/```/g' <<< "$text")
-  # Monospace: {{text}} -> `text`
-  text=$(sed 's/{{\([^}]*\)}}/`\1`/g' <<< "$text")
+  # Strip Jira macros: {panel}, {color}, {quote}
+  text=$(sed -E 's/\{panel(:[^}]*)?\}//g;s/\{color(:[^}]*)?\}//g;s/\{quote\}//g' <<< "$text")
   echo "$text"
 }
 
