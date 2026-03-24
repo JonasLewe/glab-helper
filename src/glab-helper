@@ -525,21 +525,30 @@ sync_epics() {
   local -a update_epic_ms_ids=()
 
   while IFS= read -r epic; do
-    local ekey etitle edesc
+    local ekey etitle edesc mdesc
     ekey=$(jq -r '.key' <<< "$epic")
     etitle=$(jq -r '.fields.summary' <<< "$epic")
     edesc=$(jq -r '.fields.description // ""' <<< "$epic")
+    mdesc=$(jira_to_markdown "$edesc")
+    # Append Jira key tag for future matching
+    mdesc="${mdesc:+$mdesc
+
+}<!-- jira:${ekey} -->"
+    # Match by Jira key in description first, then fall back to title
     local ms_id
-    ms_id=$(jq -r --arg t "$etitle" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    ms_id=$(jq -r --arg k "$ekey" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    if [[ -z "$ms_id" ]]; then
+      ms_id=$(jq -r --arg t "$etitle" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    fi
     if [[ -n "$ms_id" ]]; then
       update_epics+=("$etitle")
       update_epic_keys+=("$ekey")
-      update_epic_descs+=("$(jira_to_markdown "$edesc")")
+      update_epic_descs+=("$mdesc")
       update_epic_ms_ids+=("$ms_id")
     else
       new_epics+=("$etitle")
       new_epic_keys+=("$ekey")
-      new_epic_descs+=("$(jira_to_markdown "$edesc")")
+      new_epic_descs+=("$mdesc")
     fi
   done < <(jq -c '.[]' <<< "$JIRA_EPICS_JSON")
 
@@ -602,7 +611,7 @@ sync_epics() {
     local ms_title="${update_epics[$i]}"
     local ms_desc="${update_epic_descs[$i]}"
     local ms_id="${update_epic_ms_ids[$i]}"
-    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "description=$ms_desc")
+    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=$ms_title" -f "description=$ms_desc")
     if "${ms_cmd[@]}" &>/dev/null; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(updated)${RESET}"
       ((updated++))
@@ -676,8 +685,14 @@ sync_stories() {
       "${JIRA_URL}/rest/api/2/issue/${epic_key}?fields=summary,description")
     epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_resp")
     epic_desc=$(jq -r '.fields.description // ""' <<< "$epic_resp")
-    [[ -n "$epic_title" ]] && epic_titles[$epic_key]="$epic_title"
-    [[ -n "$epic_desc" ]] && epic_descs[$epic_key]="$(jira_to_markdown "$epic_desc")"
+    if [[ -n "$epic_title" ]]; then
+      epic_titles[$epic_key]="$epic_title"
+      local mdesc
+      mdesc=$(jira_to_markdown "$epic_desc")
+      epic_descs[$epic_key]="${mdesc:+$mdesc
+
+}<!-- jira:${epic_key} -->"
+    fi
   done <<< "$epic_keys_list"
   printf "\r                                      \r"
 
@@ -690,7 +705,11 @@ sync_stories() {
   local -a update_ms_keys=()
   for ek in "${(@k)epic_titles}"; do
     local ms_id
-    ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    # Match by Jira key in description first, then fall back to title
+    ms_id=$(jq -r --arg k "$ek" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    if [[ -z "$ms_id" ]]; then
+      ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    fi
     if [[ -n "$ms_id" ]]; then
       update_ms_keys+=("$ek")
     else
@@ -744,11 +763,14 @@ sync_stories() {
     fi
   done
 
-  # Update existing milestones
+  # Update existing milestones (title + description)
   for ek in "${update_ms_keys[@]}"; do
     local ms_id
-    ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
-    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "description=${epic_descs[$ek]:-}")
+    ms_id=$(jq -r --arg k "$ek" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    if [[ -z "$ms_id" ]]; then
+      ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+    fi
+    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=${epic_titles[$ek]}" -f "description=${epic_descs[$ek]:-}")
     if "${ms_cmd[@]}" &>/dev/null; then
       ((ms_updated++))
     fi
@@ -1555,19 +1577,27 @@ ${members}"
         "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary,description")
       epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_response")
       epic_desc=$(jira_to_markdown "$(jq -r '.fields.description // ""' <<< "$epic_response")")
+      local ms_desc_full="${epic_desc:+$epic_desc
+
+}<!-- jira:${jira_epic_key} -->"
       printf "\r                                      \r"
 
       if [[ -n "$epic_title" ]]; then
         ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
-        existing_ms=$(jq -r --arg t "$epic_title" '[.[] | select(.title == $t)][0] | .title // empty' <<< "$ms_json" 2>/dev/null)
+        # Match by Jira key in description first, then fall back to title
+        local existing_ms_id
+        existing_ms_id=$(jq -r --arg k "$jira_epic_key" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+        if [[ -z "$existing_ms_id" ]]; then
+          existing_ms_id=$(jq -r --arg t "$epic_title" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+        fi
 
-        if [[ -z "$existing_ms" ]]; then
-          local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title")
-          [[ -n "$epic_desc" ]] && ms_cmd+=(-f "description=$epic_desc")
+        if [[ -z "$existing_ms_id" ]]; then
+          local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" -f "description=$ms_desc_full")
           "${ms_cmd[@]}" &>/dev/null
           echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} created from epic ${DIM}${jira_epic_key}${RESET}"
         else
-          echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(already exists)${RESET}"
+          glab api "projects/$project_id/milestones/$existing_ms_id" -X PUT -f "title=$epic_title" -f "description=$ms_desc_full" &>/dev/null
+          echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(updated)${RESET}"
         fi
         milestone="$epic_title"
       fi
