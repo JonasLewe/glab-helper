@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # ─────────────────────────────────────────────────────────────
 # glab-helper — Interactive GitLab workflow helper
 # ─────────────────────────────────────────────────────────────
@@ -96,6 +96,11 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# ─── Temp file cleanup ───
+_tmpfiles=()
+cleanup_tmpfiles() { for f in "${_tmpfiles[@]}"; do rm -f "$f" 2>/dev/null; done; }
+trap 'cleanup_tmpfiles' EXIT INT TERM
+
 # ─── Clear screen ───
 clear
 
@@ -189,7 +194,9 @@ offer_branch_creation() {
   # Truncate at word boundary (hyphen) to max 60 chars
   if [[ ${#branch_name} -gt 60 ]]; then
     branch_name="${branch_name:0:60}"
-    branch_name="${branch_name%-*}"  # truncate to last full word
+    local truncated="${branch_name%-*}"
+    # Guard against empty result if no hyphen in first 60 chars
+    branch_name="${truncated:-$branch_name}"
   fi
 
   hr
@@ -1179,7 +1186,7 @@ ${ICON_WARN} Close issue"
       printf "\r                                        \r"
 
       tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
-      trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
+      _tmpfiles+=("$tmpfile")
       cat > "$tmpfile" <<< "$current_desc"
 
       echo "  ${DIM}Opening editor... (save & quit to update, :cq to cancel)${RESET}"
@@ -1537,7 +1544,7 @@ ${ICON_NEW} Manual"
     echo ""
 
     tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
-    trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
+    _tmpfiles+=("$tmpfile")
     cat > "$tmpfile" <<< "$description"
 
     echo "  ${DIM}Opening editor... (save & quit to continue, :cq to abort)${RESET}"
@@ -2046,7 +2053,7 @@ echo "  ${MAGENTA}${ICON_DESC}${RESET} ${BOLD}Description${RESET}"
 echo ""
 
 tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
-trap 'rm -f "$tmpfile" 2>/dev/null' EXIT INT TERM
+_tmpfiles+=("$tmpfile")
 
 DESCRIPTION_TEMPLATE='## Context
 
