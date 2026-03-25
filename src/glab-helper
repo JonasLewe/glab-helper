@@ -528,7 +528,7 @@ sync_epics() {
   # Fetch existing milestones
   echo -n "  ${DIM}Checking existing milestones...${RESET}"
   local ms_json existing_ms_titles
-  ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+  ms_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null)" "[]")
   existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
   printf "\r                                      \r"
 
@@ -673,7 +673,7 @@ sync_stories() {
   gl_issues_json="[]"
   while true; do
     local gl_page_json
-    gl_page_json=$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null || echo "[]")
+    gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
     local gl_page_count
     gl_page_count=$(jq 'length' <<< "$gl_page_json")
     gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
@@ -729,7 +729,7 @@ sync_stories() {
 
   # Check which milestones need creation
   local ms_json existing_ms_titles
-  ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+  ms_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null)" "[]")
   existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
 
   local -a new_ms_keys=()
@@ -911,7 +911,7 @@ sync_stories() {
     echo ""
 
     # Refresh milestone list (new ones may have just been created)
-    ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+    ms_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null)" "[]")
 
     while IFS= read -r story; do
       local s_key s_summary s_priority s_labels_json s_epic_key
@@ -1332,7 +1332,7 @@ ${members}"
       echo ""
       echo -n "  ${DIM}Fetching milestones...${RESET}"
       current_ms=$(jq -r '.milestone.title // "none"' <<< "$selected_issue_json")
-      ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+      ms_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null)" "[]")
       if jq -e 'type == "array"' <<< "$ms_json" &>/dev/null; then
         milestones=$(jq -r '.[].title // empty' <<< "$ms_json" 2>/dev/null)
       else
@@ -1460,7 +1460,7 @@ ${ICON_NEW} Manual"
     gl_issues_json="[]"
     while true; do
       local gl_page_json
-      gl_page_json=$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null || echo "[]")
+      gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
       local gl_page_count
       gl_page_count=$(jq 'length' <<< "$gl_page_json")
       gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
@@ -1720,7 +1720,7 @@ ${members}"
       printf "\r                                      \r"
 
       if [[ -n "$epic_title" ]]; then
-        ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+        ms_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null)" "[]")
         # Match by Jira key in description first, then fall back to title
         local existing_ms_id
         existing_ms_id=$(jq -r --arg k "$jira_epic_key" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
@@ -1827,7 +1827,7 @@ fi
 member_count=$(awk 'NF{c++} END{print c+0}' <<< "$members")
 
 # ─── Fetch milestones ───
-ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null) || ms_json="[]"
+ms_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null)" "[]")
 if jq -e 'type == "array"' <<< "$ms_json" &>/dev/null; then
   milestones=$(jq -r '.[].title // empty' <<< "$ms_json" 2>/dev/null)
 else
@@ -2288,7 +2288,7 @@ elif [[ "$action" == *"Reset"* ]]; then
   echo -n "  ${DIM}Counting...${RESET}"
   issues_json=$(glab api "projects/$project_id/issues?state=opened&per_page=100" 2>/dev/null || echo "[]")
   issue_count=$(jq 'length' <<< "$issues_json")
-  ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+  ms_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null)" "[]")
   ms_count=$(jq 'length' <<< "$ms_json")
   printf "\r                          \r"
 
