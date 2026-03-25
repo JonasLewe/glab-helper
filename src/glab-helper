@@ -204,6 +204,21 @@ fetch_all_milestones() {
   echo "$all"
 }
 
+# Retry a command up to N times with 1s delay between attempts
+retry() {
+  local max_attempts="${1:-3}"
+  shift
+  local attempt=1
+  while (( attempt <= max_attempts )); do
+    if "$@" 2>/dev/null; then
+      return 0
+    fi
+    ((attempt++))
+    [[ $attempt -le $max_attempts ]] && sleep 1
+  done
+  return 1
+}
+
 # Create a branch from default branch and optionally check it out
 # Usage: offer_branch_creation <issue_number> <title>
 offer_branch_creation() {
@@ -629,7 +644,7 @@ sync_epics() {
     local ms_desc="${new_epic_descs[$i]}"
     local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
     [[ -n "$ms_desc" ]] && ms_cmd+=(-f "description=$ms_desc")
-    if "${ms_cmd[@]}" &>/dev/null; then
+    if retry 3 "${ms_cmd[@]}"; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(created)${RESET}"
       ((created++))
     else
@@ -644,7 +659,7 @@ sync_epics() {
     local ms_desc="${update_epic_descs[$i]}"
     local ms_id="${update_epic_ms_ids[$i]}"
     local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=$ms_title" -f "description=$ms_desc")
-    if "${ms_cmd[@]}" &>/dev/null; then
+    if retry 3 "${ms_cmd[@]}"; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(updated)${RESET}"
       ((updated++))
     else
@@ -806,7 +821,7 @@ sync_stories() {
   for ek in "${new_ms_keys[@]}"; do
     local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=${epic_titles[$ek]}")
     [[ -n "${epic_descs[$ek]:-}" ]] && ms_cmd+=(-f "description=${epic_descs[$ek]}")
-    if "${ms_cmd[@]}" &>/dev/null; then
+    if retry 3 "${ms_cmd[@]}"; then
       ((ms_created++))
     fi
   done
@@ -819,7 +834,7 @@ sync_stories() {
       ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
     fi
     local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=${epic_titles[$ek]}" -f "description=${epic_descs[$ek]:-}")
-    if "${ms_cmd[@]}" &>/dev/null; then
+    if retry 3 "${ms_cmd[@]}"; then
       ((ms_updated++))
     fi
   done
@@ -907,9 +922,17 @@ sync_stories() {
     [[ -n "$s_labels_csv" ]] && cmd+=(-l "$s_labels_csv")
     [[ -n "$s_milestone" ]] && cmd+=(-m "$s_milestone")
 
-    local output
-    output=$("${cmd[@]}" 2>&1)
-    if [[ $? -eq 0 ]]; then
+    local output attempt=1 max_attempts=3 success=false
+    while (( attempt <= max_attempts )); do
+      output=$("${cmd[@]}" 2>&1)
+      if [[ $? -eq 0 ]]; then
+        success=true
+        break
+      fi
+      ((attempt++))
+      [[ $attempt -le $max_attempts ]] && sleep 1
+    done
+    if $success; then
       echo "  ${GREEN}${ICON_OK}${RESET} [${s_key}] ${s_summary}"
       ((created++))
     else
@@ -995,7 +1018,7 @@ sync_stories() {
         [[ -n "$ms_id" ]] && cmd+=(-f "milestone_id=$ms_id")
       fi
 
-      if "${cmd[@]}" &>/dev/null; then
+      if retry 3 "${cmd[@]}"; then
         echo "  ${GREEN}${ICON_OK}${RESET} [${s_key}] ${s_summary} ${DIM}(updated)${RESET}"
         ((issue_updated++))
       else
