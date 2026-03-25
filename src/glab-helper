@@ -160,9 +160,9 @@ echo ""
 safe_json() {
   local response="$1" fallback="${2:-[]}"
   if jq -e . <<< "$response" &>/dev/null; then
-    echo "$response"
+    printf '%s\n' "$response"
   else
-    echo "$fallback"
+    printf '%s\n' "$fallback"
   fi
 }
 
@@ -189,19 +189,34 @@ get_default_branch() {
   echo "$branch"
 }
 
-# Fetch all active milestones with pagination
+# Fetch milestones with pagination (optional state filter, default: active)
 fetch_all_milestones() {
-  local page=1 per_page=100 all="[]"
+  local state="${1:-active}" page=1 per_page=100 all="[]" page_json count
+  local state_filter=""
+  [[ -n "$state" ]] && state_filter="state=${state}&"
   while true; do
-    local page_json
-    page_json=$(safe_json "$(glab api "projects/$project_id/milestones?state=active&per_page=${per_page}&page=${page}" 2>/dev/null)" "[]")
-    local count
+    page_json=$(safe_json "$(glab api "projects/$project_id/milestones?${state_filter}per_page=${per_page}&page=${page}" 2>/dev/null)" "[]")
     count=$(jq 'length' <<< "$page_json")
     all=$(jq -s '.[0] + .[1]' <<< "${all}"$'\n'"${page_json}")
     [[ "$count" -lt "$per_page" ]] && break
     ((page++))
   done
-  echo "$all"
+  printf '%s\n' "$all"
+}
+
+# Fetch all issues with pagination (optional state filter, default: all)
+fetch_all_issues() {
+  local state="${1:-}" page=1 per_page=100 all="[]" page_json count
+  local state_filter=""
+  [[ -n "$state" ]] && state_filter="state=${state}&"
+  while true; do
+    page_json=$(safe_json "$(glab api "projects/$project_id/issues?${state_filter}per_page=${per_page}&page=${page}" 2>/dev/null)" "[]")
+    count=$(jq 'length' <<< "$page_json")
+    all=$(jq -s '.[0] + .[1]' <<< "${all}"$'\n'"${page_json}")
+    [[ "$count" -lt "$per_page" ]] && break
+    ((page++))
+  done
+  printf '%s\n' "$all"
 }
 
 # Retry a command up to N times with 1s delay between attempts
@@ -210,7 +225,7 @@ retry() {
   shift
   local attempt=1
   while (( attempt <= max_attempts )); do
-    if "$@" 2>/dev/null; then
+    if "$@" &>/dev/null; then
       return 0
     fi
     ((attempt++))
@@ -369,7 +384,7 @@ jira_to_markdown() {
   text=$(awk '!code && NR>1 && /^./ && prev ~ /^./ {print ""}
              /^```/{code=!code}
              {print; prev=$0}' <<< "$text")
-  echo "$text"
+  printf '%s\n' "$text"
 }
 
 # Use --clean / -u NONE to prevent custom keymaps (e.g. kj→<Esc>) and plugins
@@ -571,8 +586,8 @@ sync_epics() {
   local -a update_epic_descs=()
   local -a update_epic_ms_ids=()
 
+  local ekey etitle edesc mdesc ms_id
   while IFS= read -r epic; do
-    local ekey etitle edesc mdesc
     ekey=$(jq -r '.key' <<< "$epic")
     etitle=$(jq -r '.fields.summary' <<< "$epic")
     edesc=$(jq -r '.fields.description // ""' <<< "$epic")
@@ -582,7 +597,6 @@ sync_epics() {
 
 }<!-- jira:${ekey} -->"
     # Match by Jira key in description first, then fall back to title
-    local ms_id
     ms_id=$(jq -r --arg k "$ekey" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
     if [[ -z "$ms_id" ]]; then
       ms_id=$(jq -r --arg t "$etitle" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
@@ -638,11 +652,11 @@ sync_epics() {
   echo ""
 
   # Create new milestones
-  local created=0 updated=0 failed=0
+  local created=0 updated=0 failed=0 ms_title ms_desc ms_cmd
   for (( i=1; i<=${#new_epics[@]}; i++ )); do
-    local ms_title="${new_epics[$i]}"
-    local ms_desc="${new_epic_descs[$i]}"
-    local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
+    ms_title="${new_epics[$i]}"
+    ms_desc="${new_epic_descs[$i]}"
+    ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
     [[ -n "$ms_desc" ]] && ms_cmd+=(-f "description=$ms_desc")
     if retry 3 "${ms_cmd[@]}"; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(created)${RESET}"
@@ -655,10 +669,10 @@ sync_epics() {
 
   # Update existing milestones
   for (( i=1; i<=${#update_epics[@]}; i++ )); do
-    local ms_title="${update_epics[$i]}"
-    local ms_desc="${update_epic_descs[$i]}"
-    local ms_id="${update_epic_ms_ids[$i]}"
-    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=$ms_title" -f "description=$ms_desc")
+    ms_title="${update_epics[$i]}"
+    ms_desc="${update_epic_descs[$i]}"
+    ms_id="${update_epic_ms_ids[$i]}"
+    ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=$ms_title" -f "description=$ms_desc")
     if retry 3 "${ms_cmd[@]}"; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(updated)${RESET}"
       ((updated++))
@@ -668,13 +682,6 @@ sync_epics() {
     fi
   done
 
-  # Summary
-  echo ""
-  hr
-  echo ""
-  echo "  ${BOLD}Sync Complete${RESET}"
-  echo ""
-  echo "  ${ICON_MILE} Milestones: ${GREEN}${created} created${RESET}, ${GREEN}${updated} updated${RESET}, ${RED}${failed} failed${RESET}"
   echo ""
 }
 
@@ -700,11 +707,10 @@ sync_stories() {
   echo -n "  ${DIM}Checking synced issues...${RESET}"
   local gl_issues_json synced_keys
   local gl_page=1 gl_per_page=100
+  local gl_page_json gl_page_count
   gl_issues_json="[]"
   while true; do
-    local gl_page_json
     gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
-    local gl_page_count
     gl_page_count=$(jq 'length' <<< "$gl_page_json")
     gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
     [[ "$gl_page_count" -lt "$gl_per_page" ]] && break
@@ -732,30 +738,31 @@ sync_stories() {
     return 0
   fi
 
-  # Resolve epic keys for milestone assignment
-  echo -n "  ${DIM}Resolving epics...${RESET}"
+  # Fetch all epics for milestone assignment (same as sync_epics)
+  echo -n "  ${DIM}Fetching epics...${RESET}"
   typeset -A epic_titles
   typeset -A epic_descs
-  local epic_keys_list
-  epic_keys_list=$(jq -r '[.[].fields.customfield_10000 // empty] | unique | map(select(. != "null" and length > 0)) | .[]' <<< "$JIRA_STORIES_JSON")
+  if ! fetch_jira_epics; then
+    printf "\r                                      \r"
+    echo "  ${YELLOW}${ICON_WARN}${RESET} ${DIM}Could not fetch epics — milestones will be skipped${RESET}"
+  else
+    printf "\r                                      \r"
+    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${JIRA_EPICS_COUNT} epics fetched from Jira${RESET}"
+    local ekey etitle edesc mdesc
+    while IFS= read -r epic; do
+      [[ -z "$epic" ]] && continue
+      ekey=$(jq -r '.key' <<< "$epic")
+      etitle=$(jq -r '.fields.summary' <<< "$epic")
+      edesc=$(jq -r '.fields.description // ""' <<< "$epic")
+      if [[ -n "$etitle" ]]; then
+        epic_titles[$ekey]="$etitle"
+        mdesc=$(jira_to_markdown "$edesc")
+        epic_descs[$ekey]="${mdesc:+$mdesc
 
-  while IFS= read -r epic_key; do
-    [[ -z "$epic_key" ]] && continue
-    local epic_resp epic_title epic_desc
-    epic_resp=$(curl -s -H "Authorization: Bearer ${JIRA_TOKEN}" \
-      "${JIRA_URL}/rest/api/2/issue/${epic_key}?fields=summary,description")
-    epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_resp")
-    epic_desc=$(jq -r '.fields.description // ""' <<< "$epic_resp")
-    if [[ -n "$epic_title" ]]; then
-      epic_titles[$epic_key]="$epic_title"
-      local mdesc
-      mdesc=$(jira_to_markdown "$epic_desc")
-      epic_descs[$epic_key]="${mdesc:+$mdesc
-
-}<!-- jira:${epic_key} -->"
-    fi
-  done <<< "$epic_keys_list"
-  printf "\r                                      \r"
+}<!-- jira:${ekey} -->"
+      fi
+    done < <(jq -c '.[]' <<< "$JIRA_EPICS_JSON")
+  fi
 
   # Check which milestones need creation
   local ms_json existing_ms_titles
@@ -764,8 +771,8 @@ sync_stories() {
 
   local -a new_ms_keys=()
   local -a update_ms_keys=()
+  local ms_id
   for ek in "${(@k)epic_titles}"; do
-    local ms_id
     # Match by Jira key in description first, then fall back to title
     ms_id=$(jq -r --arg k "$ek" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
     if [[ -z "$ms_id" ]]; then
@@ -785,15 +792,21 @@ sync_stories() {
   echo "  ${BOLD}Preview${RESET}"
   echo ""
   if [[ ${#new_ms_keys[@]} -gt 0 ]]; then
-    echo "  ${ICON_MILE} ${#new_ms_keys[@]} milestones to create"
+    echo "  ${ICON_MILE} ${#new_ms_keys[@]} milestones to create:"
+    for ek in "${new_ms_keys[@]}"; do
+      echo "    ${epic_titles[$ek]}"
+    done
   fi
   if [[ ${#update_ms_keys[@]} -gt 0 ]]; then
-    echo "  ${ICON_SYNC} ${#update_ms_keys[@]} milestones to update"
+    echo "  ${ICON_SYNC} ${#update_ms_keys[@]} milestones to update:"
+    for ek in "${update_ms_keys[@]}"; do
+      echo "    ${epic_titles[$ek]}"
+    done
   fi
+  local skey stitle
   if [[ $unsynced_count -gt 0 ]]; then
     echo "  ${GREEN}${ICON_NEW}${RESET} ${unsynced_count} issues to create:"
     while IFS= read -r line; do
-      local skey stitle
       skey=$(jq -r '.key' <<< "$line")
       stitle=$(jq -r '.fields.summary' <<< "$line")
       echo "    [${skey}] ${stitle}"
@@ -817,34 +830,38 @@ sync_stories() {
   echo ""
 
   # Create missing milestones
-  local ms_created=0 ms_updated=0
+  local ms_created=0 ms_updated=0 ms_failed=0 ms_cmd
+  if [[ ${#new_ms_keys[@]} -gt 0 || ${#update_ms_keys[@]} -gt 0 ]]; then
+    echo "  ${DIM}Creating milestones...${RESET}"
+    echo ""
+  fi
   for ek in "${new_ms_keys[@]}"; do
-    local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=${epic_titles[$ek]}")
+    ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=${epic_titles[$ek]}")
     [[ -n "${epic_descs[$ek]:-}" ]] && ms_cmd+=(-f "description=${epic_descs[$ek]}")
     if retry 3 "${ms_cmd[@]}"; then
+      echo "  ${GREEN}${ICON_OK}${RESET} ${epic_titles[$ek]} ${DIM}(created)${RESET}"
       ((ms_created++))
+    else
+      echo "  ${RED}${ICON_WARN}${RESET} ${epic_titles[$ek]} ${DIM}— failed${RESET}"
+      ((ms_failed++))
     fi
   done
 
   # Update existing milestones (title + description)
   for ek in "${update_ms_keys[@]}"; do
-    local ms_id
     ms_id=$(jq -r --arg k "$ek" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
     if [[ -z "$ms_id" ]]; then
       ms_id=$(jq -r --arg t "${epic_titles[$ek]}" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
     fi
-    local ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=${epic_titles[$ek]}" -f "description=${epic_descs[$ek]:-}")
+    ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=${epic_titles[$ek]}" -f "description=${epic_descs[$ek]:-}")
     if retry 3 "${ms_cmd[@]}"; then
+      echo "  ${GREEN}${ICON_OK}${RESET} ${epic_titles[$ek]} ${DIM}(updated)${RESET}"
       ((ms_updated++))
+    else
+      echo "  ${RED}${ICON_WARN}${RESET} ${epic_titles[$ek]} ${DIM}— update failed${RESET}"
+      ((ms_failed++))
     fi
   done
-
-  if [[ $ms_created -gt 0 || $ms_updated -gt 0 ]]; then
-    local ms_parts=""
-    [[ $ms_created -gt 0 ]] && ms_parts="${ms_created} created"
-    [[ $ms_updated -gt 0 ]] && ms_parts="${ms_parts:+$ms_parts, }${ms_updated} updated"
-    echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}Milestones: ${ms_parts}${RESET}"
-  fi
 
   # Ensure all needed labels exist in GitLab
   echo -n "  ${DIM}Syncing labels...${RESET}"
@@ -870,8 +887,10 @@ sync_stories() {
   echo ""
 
   local created=0 failed=0
+  local s_key s_summary s_desc s_priority s_labels_json s_epic_key s_subtasks_json
+  local s_title s_description st_count st_key st_summary s_labels_csv s_milestone
+  local cmd output attempt max_attempts success
   while IFS= read -r story; do
-    local s_key s_summary s_desc s_priority s_labels_json s_epic_key s_subtasks_json
     s_key=$(jq -r '.key' <<< "$story")
     s_summary=$(jq -r '.fields.summary' <<< "$story")
     s_desc=$(jq -r '.fields.description // ""' <<< "$story")
@@ -881,19 +900,16 @@ sync_stories() {
     s_subtasks_json=$(jq '.fields.subtasks // []' <<< "$story")
 
     # Title
-    local s_title="[${s_key}] ${s_summary}"
+    s_title="[${s_key}] ${s_summary}"
 
     # Description
-    local s_description
     s_description=$(jira_to_markdown "$s_desc")
 
     # Subtasks as checkboxes
-    local st_count
     st_count=$(jq 'length' <<< "$s_subtasks_json")
     if [[ "$st_count" -gt 0 ]]; then
       s_description="${s_description}"$'\n\n'"## Subtasks"
       while IFS= read -r st; do
-        local st_key st_summary
         st_key=$(jq -r '.key' <<< "$st")
         st_summary=$(jq -r '.fields.summary' <<< "$st")
         s_description="${s_description}"$'\n'"- [ ] ${st_key}: ${st_summary}"
@@ -901,7 +917,6 @@ sync_stories() {
     fi
 
     # Labels
-    local s_labels_csv
     s_labels_csv=$(jq -r 'join(",")' <<< "$s_labels_json")
     if [[ -n "$s_priority" ]]; then
       if [[ -n "$s_labels_csv" ]]; then
@@ -912,17 +927,17 @@ sync_stories() {
     fi
 
     # Milestone from epic
-    local s_milestone=""
+    s_milestone=""
     if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
       s_milestone="${epic_titles[$s_epic_key]:-}"
     fi
 
     # Build command
-    local cmd=(glab issue create -t "$s_title" -d "$s_description")
+    cmd=(glab issue create -t "$s_title" -d "$s_description")
     [[ -n "$s_labels_csv" ]] && cmd+=(-l "$s_labels_csv")
     [[ -n "$s_milestone" ]] && cmd+=(-m "$s_milestone")
 
-    local output attempt=1 max_attempts=3 success=false
+    output="" attempt=1 max_attempts=3 success=false
     while (( attempt <= max_attempts )); do
       output=$("${cmd[@]}" 2>&1)
       if [[ $? -eq 0 ]]; then
@@ -951,8 +966,10 @@ sync_stories() {
     # Refresh milestone list (new ones may have just been created)
     ms_json=$(fetch_all_milestones)
 
+    local s_key s_summary s_priority s_labels_json s_epic_key
+    local gl_issue gl_iid gl_title gl_labels_csv gl_milestone
+    local new_title jira_labels merged_labels new_milestone changed cmd
     while IFS= read -r story; do
-      local s_key s_summary s_priority s_labels_json s_epic_key
       s_key=$(jq -r '.key' <<< "$story")
       s_summary=$(jq -r '.fields.summary' <<< "$story")
       s_priority=$(jq -r '.fields.priority.name // ""' <<< "$story")
@@ -960,7 +977,6 @@ sync_stories() {
       s_epic_key=$(jq -r '.fields.customfield_10000 // ""' <<< "$story")
 
       # Find corresponding GitLab issue
-      local gl_issue gl_iid gl_title gl_labels_csv gl_milestone
       gl_issue=$(jq -c --arg k "$s_key" '.[] | select(.title | contains("[" + $k + "]"))' <<< "$gl_issues_json" | head -1)
       [[ -z "$gl_issue" ]] && continue
       gl_iid=$(jq -r '.iid' <<< "$gl_issue")
@@ -969,15 +985,14 @@ sync_stories() {
       gl_milestone=$(jq -r '.milestone.title // ""' <<< "$gl_issue")
 
       # Build expected values from Jira
-      local new_title="[${s_key}] ${s_summary}"
+      new_title="[${s_key}] ${s_summary}"
 
       # Merge labels: existing GitLab labels + Jira labels + priority label
-      local jira_labels
       jira_labels=$(jq -r '.[]' <<< "$s_labels_json")
       [[ -n "$s_priority" ]] && jira_labels="${jira_labels:+$jira_labels
 }prio::${s_priority}"
       # Union: start with GitLab labels, add missing Jira labels
-      local merged_labels="$gl_labels_csv"
+      merged_labels="$gl_labels_csv"
       while IFS= read -r jl; do
         [[ -z "$jl" ]] && continue
         # Use exact match on comma-separated list to avoid substring false positives
@@ -992,13 +1007,13 @@ sync_stories() {
       fi
 
       # Resolve milestone from epic
-      local new_milestone=""
+      new_milestone=""
       if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
         new_milestone="${epic_titles[$s_epic_key]:-}"
       fi
 
       # Check if anything changed
-      local changed=false
+      changed=false
       [[ "$new_title" != "$gl_title" ]] && changed=true
       [[ "$merged_labels" != "$gl_labels_csv" ]] && changed=true
       [[ "$new_milestone" != "$gl_milestone" ]] && changed=true
@@ -1009,11 +1024,10 @@ sync_stories() {
       fi
 
       # Build update command
-      local cmd=(glab api "projects/$project_id/issues/$gl_iid" -X PUT)
+      cmd=(glab api "projects/$project_id/issues/$gl_iid" -X PUT)
       cmd+=(-f "title=$new_title")
       [[ -n "$merged_labels" ]] && cmd+=(-f "labels=$merged_labels")
       if [[ -n "$new_milestone" ]]; then
-        local ms_id
         ms_id=$(jq -r --arg t "$new_milestone" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
         [[ -n "$ms_id" ]] && cmd+=(-f "milestone_id=$ms_id")
       fi
@@ -1104,7 +1118,7 @@ elif [[ "$action" == *"Work on existing"* ]]; then
     echo ""
     echo "  ${DIM}No open issues found.${RESET}"
     echo ""
-    exit 0
+    exec "$0" ${TESTING:+"--test"}
   fi
 
   if [[ "$issue_count" -ge 100 ]]; then
@@ -1494,12 +1508,10 @@ ${ICON_NEW} Manual"
 
     # Fetch existing GitLab issues (paginated) to find already-synced stories
     echo -n "  ${DIM}Checking synced issues...${RESET}"
-    local gl_page=1 gl_per_page=100
+    local gl_page=1 gl_per_page=100 gl_page_json gl_page_count
     gl_issues_json="[]"
     while true; do
-      local gl_page_json
       gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
-      local gl_page_count
       gl_page_count=$(jq 'length' <<< "$gl_page_json")
       gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
       [[ "$gl_page_count" -lt "$gl_per_page" ]] && break
@@ -2322,12 +2334,13 @@ elif [[ "$action" == *"Reset"* ]]; then
   echo "  ${RED}${ICON_WARN}${RESET} ${BOLD}Reset: delete all issues & milestones${RESET}"
   echo ""
 
-  # Count issues and milestones
+  # Count issues and milestones (paginated, all states)
   echo -n "  ${DIM}Counting...${RESET}"
-  issues_json=$(glab api "projects/$project_id/issues?state=opened&per_page=100" 2>/dev/null || echo "[]")
+  issues_json=$(fetch_all_issues)
   issue_count=$(jq 'length' <<< "$issues_json")
-  ms_json=$(fetch_all_milestones)
+  ms_json=$(fetch_all_milestones "")
   ms_count=$(jq 'length' <<< "$ms_json")
+
   printf "\r                          \r"
 
   if [[ "$issue_count" -eq 0 && "$ms_count" -eq 0 ]]; then
@@ -2336,7 +2349,7 @@ elif [[ "$action" == *"Reset"* ]]; then
     exit 0
   fi
 
-  echo "  ${RED}${issue_count}${RESET} open issues and ${RED}${ms_count}${RESET} active milestones will be deleted."
+  echo "  ${RED}${issue_count}${RESET} issues and ${RED}${ms_count}${RESET} milestones will be deleted."
   echo ""
   echo -n "  ${BOLD}Type '${RED}delete${RESET}${BOLD}' to confirm:${RESET} "
   read -r confirm
