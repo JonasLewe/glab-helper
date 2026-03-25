@@ -656,17 +656,21 @@ sync_stories() {
   synced_keys=$(jq -r '.[].title' <<< "$gl_issues_json" | grep -oE '\[[A-Z]+-[0-9]+\]' | tr -d '[]')
   printf "\r                                      \r"
 
-  # Filter unsynced stories
-  local unsynced_json unsynced_count
+  # Split into unsynced (new) and synced (update candidates)
+  local unsynced_json synced_json unsynced_count synced_count
   unsynced_json=$(jq --arg synced "$synced_keys" '
     ($synced | split("\n") | map(select(length > 0))) as $keys |
     map(select(.key as $k | ($keys | index($k)) | not))
   ' <<< "$JIRA_STORIES_JSON")
+  synced_json=$(jq --arg synced "$synced_keys" '
+    ($synced | split("\n") | map(select(length > 0))) as $keys |
+    map(select(.key as $k | ($keys | index($k)) | not | not))
+  ' <<< "$JIRA_STORIES_JSON")
   unsynced_count=$(jq 'length' <<< "$unsynced_json")
-  local issues_skipped=$((JIRA_STORIES_COUNT - unsynced_count))
+  synced_count=$(jq 'length' <<< "$synced_json")
 
-  if [[ "$unsynced_count" -eq 0 ]]; then
-    echo "  ${DIM}All ${JIRA_STORIES_COUNT} stories are already synced.${RESET}"
+  if [[ "$unsynced_count" -eq 0 && "$synced_count" -eq 0 ]]; then
+    echo "  ${DIM}No stories found matching board labels.${RESET}"
     echo ""
     return 0
   fi
@@ -676,7 +680,7 @@ sync_stories() {
   typeset -A epic_titles
   typeset -A epic_descs
   local epic_keys_list
-  epic_keys_list=$(jq -r '[.[].fields.customfield_10000 // empty] | unique | map(select(. != "null" and length > 0)) | .[]' <<< "$unsynced_json")
+  epic_keys_list=$(jq -r '[.[].fields.customfield_10000 // empty] | unique | map(select(. != "null" and length > 0)) | .[]' <<< "$JIRA_STORIES_JSON")
 
   while IFS= read -r epic_key; do
     [[ -z "$epic_key" ]] && continue
@@ -729,15 +733,17 @@ sync_stories() {
   if [[ ${#update_ms_keys[@]} -gt 0 ]]; then
     echo "  ${ICON_SYNC} ${#update_ms_keys[@]} milestones to update"
   fi
-  echo "  ${GREEN}${ICON_NEW}${RESET} ${unsynced_count} issues to create:"
-  while IFS= read -r line; do
-    local skey stitle
-    skey=$(jq -r '.key' <<< "$line")
-    stitle=$(jq -r '.fields.summary' <<< "$line")
-    echo "    [${skey}] ${stitle}"
-  done < <(jq -c '.[]' <<< "$unsynced_json")
-  if [[ $issues_skipped -gt 0 ]]; then
-    echo "  ${DIM}${issues_skipped} already synced${RESET}"
+  if [[ $unsynced_count -gt 0 ]]; then
+    echo "  ${GREEN}${ICON_NEW}${RESET} ${unsynced_count} issues to create:"
+    while IFS= read -r line; do
+      local skey stitle
+      skey=$(jq -r '.key' <<< "$line")
+      stitle=$(jq -r '.fields.summary' <<< "$line")
+      echo "    [${skey}] ${stitle}"
+    done < <(jq -c '.[]' <<< "$unsynced_json")
+  fi
+  if [[ $synced_count -gt 0 ]]; then
+    echo "  ${ICON_SYNC} ${synced_count} issues to check for updates"
   fi
   echo ""
   hr
@@ -792,7 +798,7 @@ sync_stories() {
     ([.[].fields.labels[]?] | unique) +
     ([.[].fields.priority.name // empty] | unique | map("prio::" + .))
     | unique | .[]
-  ' <<< "$unsynced_json")
+  ' <<< "$JIRA_STORIES_JSON")
 
   while IFS= read -r lbl; do
     [[ -z "$lbl" ]] && continue
@@ -870,15 +876,108 @@ sync_stories() {
     fi
   done < <(jq -c '.[]' <<< "$unsynced_json")
 
+  # Update existing issues (title, labels merge, milestone)
+  local issue_updated=0 issue_uptodate=0
+  if [[ "$synced_count" -gt 0 ]]; then
+    echo ""
+    echo "  ${DIM}Checking for updates...${RESET}"
+    echo ""
+
+    # Refresh milestone list (new ones may have just been created)
+    ms_json=$(glab api "projects/$project_id/milestones?state=active&per_page=100" 2>/dev/null || echo "[]")
+
+    while IFS= read -r story; do
+      local s_key s_summary s_priority s_labels_json s_epic_key
+      s_key=$(jq -r '.key' <<< "$story")
+      s_summary=$(jq -r '.fields.summary' <<< "$story")
+      s_priority=$(jq -r '.fields.priority.name // ""' <<< "$story")
+      s_labels_json=$(jq '.fields.labels // []' <<< "$story")
+      s_epic_key=$(jq -r '.fields.customfield_10000 // ""' <<< "$story")
+
+      # Find corresponding GitLab issue
+      local gl_issue gl_iid gl_title gl_labels_csv gl_milestone
+      gl_issue=$(jq -c --arg k "$s_key" '.[] | select(.title | contains("[" + $k + "]"))' <<< "$gl_issues_json" | head -1)
+      [[ -z "$gl_issue" ]] && continue
+      gl_iid=$(jq -r '.iid' <<< "$gl_issue")
+      gl_title=$(jq -r '.title' <<< "$gl_issue")
+      gl_labels_csv=$(jq -r '[.labels[]?] | join(",")' <<< "$gl_issue")
+      gl_milestone=$(jq -r '.milestone.title // ""' <<< "$gl_issue")
+
+      # Build expected values from Jira
+      local new_title="[${s_key}] ${s_summary}"
+
+      # Merge labels: existing GitLab labels + Jira labels + priority label
+      local jira_labels
+      jira_labels=$(jq -r '.[]' <<< "$s_labels_json")
+      [[ -n "$s_priority" ]] && jira_labels="${jira_labels:+$jira_labels
+}prio::${s_priority}"
+      # Union: start with GitLab labels, add missing Jira labels
+      local merged_labels="$gl_labels_csv"
+      while IFS= read -r jl; do
+        [[ -z "$jl" ]] && continue
+        if ! grep -qF "$jl" <<< "$merged_labels"; then
+          merged_labels="${merged_labels:+$merged_labels,}${jl}"
+        fi
+      done <<< "$jira_labels"
+      # Update old prio:: label if priority changed
+      if [[ -n "$s_priority" ]]; then
+        merged_labels=$(echo "$merged_labels" | tr ',' '\n' | grep -v '^prio::' | tr '\n' ',' | sed 's/,$//')
+        merged_labels="${merged_labels:+$merged_labels,}prio::${s_priority}"
+      fi
+
+      # Resolve milestone from epic
+      local new_milestone=""
+      if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
+        new_milestone="${epic_titles[$s_epic_key]:-}"
+      fi
+
+      # Check if anything changed
+      local changed=false
+      [[ "$new_title" != "$gl_title" ]] && changed=true
+      [[ "$merged_labels" != "$gl_labels_csv" ]] && changed=true
+      [[ "$new_milestone" != "$gl_milestone" ]] && changed=true
+
+      if ! $changed; then
+        ((issue_uptodate++))
+        continue
+      fi
+
+      # Build update command
+      local cmd=(glab api "projects/$project_id/issues/$gl_iid" -X PUT)
+      cmd+=(-f "title=$new_title")
+      [[ -n "$merged_labels" ]] && cmd+=(-f "labels=$merged_labels")
+      if [[ -n "$new_milestone" ]]; then
+        local ms_id
+        ms_id=$(jq -r --arg t "$new_milestone" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+        [[ -n "$ms_id" ]] && cmd+=(-f "milestone_id=$ms_id")
+      fi
+
+      if "${cmd[@]}" &>/dev/null; then
+        echo "  ${GREEN}${ICON_OK}${RESET} [${s_key}] ${s_summary} ${DIM}(updated)${RESET}"
+        ((issue_updated++))
+      else
+        echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— update failed${RESET}"
+        ((failed++))
+      fi
+    done < <(jq -c '.[]' <<< "$synced_json")
+  fi
+
   # Summary
   echo ""
   hr
   echo ""
   echo "  ${BOLD}Sync Complete${RESET}"
   echo ""
-  echo "  ${ICON_TITLE} Issues:     ${GREEN}${created} created${RESET}, ${DIM}${issues_skipped} synced${RESET}, ${RED}${failed} failed${RESET}"
-  if [[ $ms_created -gt 0 ]]; then
-    echo "  ${ICON_MILE} Milestones: ${GREEN}${ms_created} created${RESET}"
+  local issue_parts="${GREEN}${created} created${RESET}"
+  [[ $issue_updated -gt 0 ]] && issue_parts="${issue_parts}, ${GREEN}${issue_updated} updated${RESET}"
+  [[ $issue_uptodate -gt 0 ]] && issue_parts="${issue_parts}, ${DIM}${issue_uptodate} up-to-date${RESET}"
+  [[ $failed -gt 0 ]] && issue_parts="${issue_parts}, ${RED}${failed} failed${RESET}"
+  echo "  ${ICON_TITLE} Issues:     ${issue_parts}"
+  local ms_parts=""
+  [[ $ms_created -gt 0 ]] && ms_parts="${ms_created} created"
+  [[ $ms_updated -gt 0 ]] && ms_parts="${ms_parts:+$ms_parts, }${ms_updated} updated"
+  if [[ -n "$ms_parts" ]]; then
+    echo "  ${ICON_MILE} Milestones: ${GREEN}${ms_parts}${RESET}"
   fi
   echo ""
 }
