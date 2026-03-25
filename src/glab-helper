@@ -649,10 +649,20 @@ sync_stories() {
   printf "\r                                      \r"
   echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${JIRA_STORIES_COUNT} stories fetched from Jira${RESET}"
 
-  # Fetch existing GitLab issues to find already-synced keys
+  # Fetch existing GitLab issues (paginated) to find already-synced keys
   echo -n "  ${DIM}Checking synced issues...${RESET}"
   local gl_issues_json synced_keys
-  gl_issues_json=$(glab issue list --output json -P 100 2>/dev/null || echo "[]")
+  local gl_page=1 gl_per_page=100
+  gl_issues_json="[]"
+  while true; do
+    local gl_page_json
+    gl_page_json=$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null || echo "[]")
+    local gl_page_count
+    gl_page_count=$(jq 'length' <<< "$gl_page_json")
+    gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
+    [[ "$gl_page_count" -lt "$gl_per_page" ]] && break
+    ((gl_page++))
+  done
   synced_keys=$(jq -r '.[].title' <<< "$gl_issues_json" | grep -oE '\[[A-Z]+-[0-9]+\]' | tr -d '[]')
   printf "\r                                      \r"
 
@@ -915,7 +925,8 @@ sync_stories() {
       local merged_labels="$gl_labels_csv"
       while IFS= read -r jl; do
         [[ -z "$jl" ]] && continue
-        if ! grep -qF "$jl" <<< "$merged_labels"; then
+        # Use exact match on comma-separated list to avoid substring false positives
+        if ! tr ',' '\n' <<< "$merged_labels" | grep -qxF "$jl"; then
           merged_labels="${merged_labels:+$merged_labels,}${jl}"
         fi
       done <<< "$jira_labels"
@@ -1406,7 +1417,7 @@ ${ICON_NEW} Manual"
     echo ""
     echo -n "  ${DIM}Fetching Jira stories...${RESET}"
 
-    if ! fetch_jira_stories; then
+    if ! fetch_jira_stories_paginated; then
       printf "\r                                      \r"
       echo ""
       echo "  ${RED}${ICON_WARN}${RESET} Could not connect to Jira."
@@ -1426,9 +1437,19 @@ ${ICON_NEW} Manual"
 
     printf "\r                                      \r"
 
-    # Fetch existing GitLab issues to find already-synced stories
+    # Fetch existing GitLab issues (paginated) to find already-synced stories
     echo -n "  ${DIM}Checking synced issues...${RESET}"
-    gl_issues_json=$(glab issue list --output json -P 100 2>/dev/null || echo "[]")
+    local gl_page=1 gl_per_page=100
+    gl_issues_json="[]"
+    while true; do
+      local gl_page_json
+      gl_page_json=$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null || echo "[]")
+      local gl_page_count
+      gl_page_count=$(jq 'length' <<< "$gl_page_json")
+      gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
+      [[ "$gl_page_count" -lt "$gl_per_page" ]] && break
+      ((gl_page++))
+    done
     synced_keys=$(jq -r '.[] | .title' <<< "$gl_issues_json" | grep -oE '\[[A-Z]+-[0-9]+\]' | tr -d '[]')
     printf "\r                                      \r"
 
@@ -2273,7 +2294,7 @@ elif [[ "$action" == *"Reset"* ]]; then
   echo ""
 
   # Delete issues
-  local del_issues=0
+  del_issues=0
   while IFS= read -r iid; do
     [[ -z "$iid" ]] && continue
     if glab api "projects/$project_id/issues/$iid" -X DELETE &>/dev/null; then
@@ -2282,7 +2303,7 @@ elif [[ "$action" == *"Reset"* ]]; then
   done < <(jq -r '.[].iid' <<< "$issues_json")
 
   # Delete milestones
-  local del_ms=0
+  del_ms=0
   while IFS= read -r mid; do
     [[ -z "$mid" ]] && continue
     if glab api "projects/$project_id/milestones/$mid" -X DELETE &>/dev/null; then
