@@ -350,7 +350,7 @@ jira_to_markdown() {
   # Bold: *text* -> **text** (safe now that bullet * was converted above)
   text=$(sed -E 's/\*([^*]+)\*/**\1**/g' <<< "$text")
   # Italic: _text_ -> *text* (only at word boundaries, not mid-word like my_var_name)
-  text=$(sed -E 's/(^|[[:space:]])_([^_]+)_([[:space:]].*|$)/\1*\2*\3/g' <<< "$text")
+  text=$(sed -E 's/(^|[[:space:]])_([^_]+)_([[:space:],.:;!?)]|$)/\1*\2*\3/g' <<< "$text")
   # Strikethrough: -text- -> ~~text~~ (only at word boundaries)
   text=$(sed -E 's/(^|[[:space:]])-([^- ][^-]*)-([[:space:]]|[,.:;!?)]|$)/\1~~\2~~\3/g' <<< "$text")
   # Links: [text|url] -> [text](url)
