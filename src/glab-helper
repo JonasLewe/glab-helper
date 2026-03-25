@@ -156,6 +156,16 @@ echo ""
 
 # ─── Shared helpers ───
 
+# Validate JSON response, return fallback if invalid (e.g. HTML error pages)
+safe_json() {
+  local response="$1" fallback="${2:-[]}"
+  if jq -e . <<< "$response" &>/dev/null; then
+    echo "$response"
+  else
+    echo "$fallback"
+  fi
+}
+
 slugify() {
   local result
   result=$(echo "$1" \
