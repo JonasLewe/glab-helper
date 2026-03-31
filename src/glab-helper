@@ -240,7 +240,7 @@ offer_branch_creation() {
   local issue_nr="$1"
   local issue_title="$2"
   local slug branch_name branch_name_input want_branch
-  local do_checkout checkout_err checkout_rc branch_err
+  local do_checkout checkout_err checkout_rc branch_err branch_rc
   local default_branch branch_list selected_base
 
   slug=$(slugify "$issue_title")
@@ -278,12 +278,14 @@ offer_branch_creation() {
     echo -n "  ${BOLD}Check out existing branch?${RESET} ${DIM}(y/n)${RESET} "
     read -r do_checkout
     if [[ "$do_checkout" == "y" ]]; then
-      checkout_err=$(git checkout "$branch_name" 2>&1) && {
+      checkout_err=$(git checkout "$branch_name" 2>&1)
+      checkout_rc=$?
+      if [[ $checkout_rc -eq 0 ]]; then
         echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${branch_name}${RESET}"
-      } || {
+      else
         echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
         echo "  ${DIM}${checkout_err}${RESET}"
-      }
+      fi
     fi
     echo ""
     return
@@ -350,7 +352,9 @@ ${branch_list}"
     fi
   fi
 
-  branch_err=$(git branch "$branch_name" "$start_point" 2>&1) && {
+  branch_err=$(git branch "$branch_name" "$start_point" 2>&1)
+  branch_rc=$?
+  if [[ $branch_rc -eq 0 ]]; then
     echo ""
     echo "  ${GREEN}${ICON_OK}${RESET} Branch ${BOLD}${branch_name}${RESET} created from ${DIM}${selected_base}${RESET}"
 
@@ -359,18 +363,20 @@ ${branch_list}"
     read -r do_checkout
 
     if [[ "$do_checkout" == "y" ]]; then
-      checkout_err=$(git checkout "$branch_name" 2>&1) && {
+      checkout_err=$(git checkout "$branch_name" 2>&1)
+      checkout_rc=$?
+      if [[ $checkout_rc -eq 0 ]]; then
         echo "  ${GREEN}${ICON_OK}${RESET} Switched to ${BOLD}${branch_name}${RESET}"
-      } || {
+      else
         echo "  ${RED}${ICON_WARN}${RESET} Failed to check out branch"
         echo "  ${DIM}${checkout_err}${RESET}"
-      }
+      fi
     fi
-  } || {
+  else
     echo ""
     echo "  ${RED}${ICON_WARN}${RESET} Failed to create branch"
     echo "  ${DIM}${branch_err}${RESET}"
-  }
+  fi
 
   echo ""
 }
@@ -436,24 +442,21 @@ open_editor() {
 }
 
 # ─── Jira configuration ───
-JIRA_PROJECT_PATH="ibm%2Fglab-helper"
+JIRA_PROJECT_PATH="${GLAB_HELPER_JIRA_PROJECT_PATH:-ibm%2Fglab-helper}"
 JIRA_AVAILABLE=false
 
 load_jira_config() {
   local var_url var_labels var_token
 
-  var_url=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_URL" 2>/dev/null)
-  if [[ $? -ne 0 ]]; then
+  if ! var_url=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_URL" 2>/dev/null); then
     return 1
   fi
 
-  var_labels=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_BOARD_LABELS" 2>/dev/null)
-  if [[ $? -ne 0 ]]; then
+  if ! var_labels=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_BOARD_LABELS" 2>/dev/null); then
     return 1
   fi
 
-  var_token=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_TOKEN" 2>/dev/null)
-  if [[ $? -ne 0 ]]; then
+  if ! var_token=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_TOKEN" 2>/dev/null); then
     return 1
   fi
 
@@ -467,8 +470,7 @@ load_jira_config() {
 
   # Check if current project is the target project
   local var_target
-  var_target=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_TARGET_PROJECT" 2>/dev/null)
-  if [[ $? -ne 0 ]]; then
+  if ! var_target=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_TARGET_PROJECT" 2>/dev/null); then
     return 1
   fi
   JIRA_TARGET_PROJECT=$(jq -r '.value' <<< "$var_target")
@@ -500,11 +502,13 @@ fetch_jira_stories() {
   # Build JQL from comma-separated labels: mind,Core-Service -> labels in (mind,Core-Service)
   labels_jql="labels in (${JIRA_BOARD_LABELS}) AND issuetype = Story"
 
-  stories_response=$(curl -s \
+  if ! stories_response=$(curl -fsS \
     -H "Authorization: Bearer ${JIRA_TOKEN}" \
-    "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=100&fields=key,summary,description,status,priority,labels,issuetype,customfield_10000,subtasks")
+    "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=100&fields=key,summary,description,status,priority,labels,issuetype,customfield_10000,subtasks"); then
+    return 1
+  fi
 
-  if [[ $? -ne 0 ]] || ! jq -e '.issues' <<< "$stories_response" &>/dev/null; then
+  if ! jq -e '.issues' <<< "$stories_response" &>/dev/null; then
     return 1
   fi
 
@@ -522,11 +526,13 @@ fetch_jira_epics() {
   labels_jql="labels in (${JIRA_BOARD_LABELS}) AND issuetype = Epic"
 
   while true; do
-    page_response=$(curl -s \
+    if ! page_response=$(curl -fsS \
       -H "Authorization: Bearer ${JIRA_TOKEN}" \
-      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,status,description")
+      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,status,description"); then
+      return 1
+    fi
 
-    if [[ $? -ne 0 ]] || ! jq -e '.issues' <<< "$page_response" &>/dev/null; then
+    if ! jq -e '.issues' <<< "$page_response" &>/dev/null; then
       return 1
     fi
 
@@ -551,11 +557,13 @@ fetch_jira_stories_paginated() {
   labels_jql="labels in (${JIRA_BOARD_LABELS}) AND issuetype = Story"
 
   while true; do
-    page_response=$(curl -s \
+    if ! page_response=$(curl -fsS \
       -H "Authorization: Bearer ${JIRA_TOKEN}" \
-      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,description,status,priority,labels,issuetype,customfield_10000,subtasks")
+      "${JIRA_URL}/rest/api/2/search?jql=$(printf '%s' "$labels_jql" | jq -sRr @uri)&maxResults=${max_results}&startAt=${start_at}&fields=key,summary,description,status,priority,labels,issuetype,customfield_10000,subtasks"); then
+      return 1
+    fi
 
-    if [[ $? -ne 0 ]] || ! jq -e '.issues' <<< "$page_response" &>/dev/null; then
+    if ! jq -e '.issues' <<< "$page_response" &>/dev/null; then
       return 1
     fi
 
@@ -569,6 +577,34 @@ fetch_jira_stories_paginated() {
   JIRA_STORIES_JSON="$all_issues"
   JIRA_STORIES_COUNT=$(jq 'length' <<< "$JIRA_STORIES_JSON")
   return 0
+}
+
+fetch_all_labels() {
+  local page=1 per_page=100 page_json count all="[]"
+
+  while true; do
+    page_json=$(safe_json "$(glab api "projects/$project_id/labels?per_page=${per_page}&page=${page}" 2>/dev/null)" "[]")
+    count=$(jq 'if type == "array" then length else 0 end' <<< "$page_json")
+    all=$(jq -s '.[0] + .[1]' <<< "${all}"$'\n'"${page_json}")
+    [[ "$count" -lt "$per_page" ]] && break
+    ((page++))
+  done
+
+  printf '%s\n' "$all"
+}
+
+fetch_all_members() {
+  local page=1 per_page=100 page_json count all="[]"
+
+  while true; do
+    page_json=$(safe_json "$(glab api "projects/$project_id/members/all?per_page=${per_page}&page=${page}" 2>/dev/null)" "[]")
+    count=$(jq 'if type == "array" then length else 0 end' <<< "$page_json")
+    all=$(jq -s '.[0] + .[1]' <<< "${all}"$'\n'"${page_json}")
+    [[ "$count" -lt "$per_page" ]] && break
+    ((page++))
+  done
+
+  printf '%s\n' "$all"
 }
 
 # ─── Sync epics from Jira → GitLab milestones ───
@@ -597,9 +633,8 @@ sync_epics() {
 
   # Fetch existing milestones
   echo -n "  ${DIM}Checking existing milestones...${RESET}"
-  local ms_json existing_ms_titles
+  local ms_json
   ms_json=$(fetch_all_milestones)
-  existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
   printf "\r                                      \r"
 
   # Classify epics into new vs existing (to update)
@@ -790,9 +825,8 @@ sync_stories() {
   fi
 
   # Check which milestones need creation
-  local ms_json existing_ms_titles
+  local ms_json
   ms_json=$(fetch_all_milestones)
-  existing_ms_titles=$(jq -r '.[].title' <<< "$ms_json" 2>/dev/null)
 
   local -a new_ms_keys=()
   local -a update_ms_keys=()
@@ -964,8 +998,7 @@ sync_stories() {
 
     output="" attempt=1 max_attempts=3 success=false
     while (( attempt <= max_attempts )); do
-      output=$("${cmd[@]}" 2>&1)
-      if [[ $? -eq 0 ]]; then
+      if output=$("${cmd[@]}" 2>&1); then
         success=true
         break
       fi
@@ -1279,8 +1312,7 @@ ${ICON_WARN} Close issue"
       echo "  ${DIM}Opening editor... (save & quit to update, :cq to cancel)${RESET}"
       echo ""
 
-      open_editor "$tmpfile"
-      if [[ $? -ne 0 ]]; then
+      if ! open_editor "$tmpfile"; then
         echo "  ${YELLOW}${ICON_WARN}${RESET} Cancelled."
       else
         new_desc=$(cat "$tmpfile")
@@ -1288,13 +1320,13 @@ ${ICON_WARN} Close issue"
           echo "  ${DIM}No changes made.${RESET}"
         else
           echo -n "  ${DIM}Updating description...${RESET}"
-          glab issue update "$selected_iid" -d "$new_desc" &>/dev/null && {
+          if glab issue update "$selected_iid" -d "$new_desc" &>/dev/null; then
             printf "\r                                \r"
             echo "  ${GREEN}${ICON_OK}${RESET} Description updated"
-          } || {
+          else
             printf "\r                                \r"
             echo "  ${RED}${ICON_WARN}${RESET} Failed to update description"
-          }
+          fi
         fi
       fi
 
@@ -1303,7 +1335,8 @@ ${ICON_WARN} Close issue"
       echo ""
       echo -n "  ${DIM}Fetching labels...${RESET}"
       current_labels=$(jq -r '.labels // [] | join(",")' <<< "$selected_issue_json")
-      all_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r 'sort_by(.name) | .[].name' 2>/dev/null || echo "")
+      labels_json=$(fetch_all_labels)
+      all_labels=$(jq -r 'sort_by(.name) | .[].name' <<< "$labels_json" 2>/dev/null || echo "")
       printf "\r                                \r"
 
       if [[ -n "$current_labels" ]]; then
@@ -1334,11 +1367,11 @@ ${ICON_WARN} Close issue"
           fi
         done <<< "$selected_labels"
 
-        glab issue update "$selected_iid" -l "$new_labels" &>/dev/null && {
+        if glab issue update "$selected_iid" -l "$new_labels" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Labels updated to ${DIM}${new_labels}${RESET}"
-        } || {
+        else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to update labels"
-        }
+        fi
       else
         echo "  ${DIM}No changes made.${RESET}"
       fi
@@ -1348,7 +1381,7 @@ ${ICON_WARN} Close issue"
       echo ""
       echo -n "  ${DIM}Fetching members...${RESET}"
       current_assignees=$(jq -r '.assignees // [] | map(.username) | join(", ")' <<< "$selected_issue_json")
-      members_json=$(glab api "projects/$project_id/members/all?per_page=100" 2>/dev/null) || members_json="[]"
+      members_json=$(fetch_all_members)
       if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
         members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
       else
@@ -1379,28 +1412,28 @@ ${members}"
         if [[ -z "$selected_member" ]]; then
           echo "  ${DIM}No changes made.${RESET}"
         elif [[ "$selected_member" == *"Unassign"* ]]; then
-          glab issue update "$selected_iid" -a "" &>/dev/null && {
+          if glab issue update "$selected_iid" -a "" &>/dev/null; then
             echo "  ${GREEN}${ICON_OK}${RESET} Assignee removed"
-          } || {
+          else
             echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
-          }
+          fi
         else
           new_assignee=$(awk '{print $1}' <<< "$selected_member")
-          glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null && {
+          if glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null; then
             echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
-          } || {
+          else
             echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
-          }
+          fi
         fi
       else
         echo -n "  ${ICON_NEW} Username (leave empty to skip): "
         read -r new_assignee
         if [[ -n "$new_assignee" ]]; then
-          glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null && {
+          if glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null; then
             echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
-          } || {
+          else
             echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
-          }
+          fi
         fi
       fi
 
@@ -1437,17 +1470,17 @@ ${milestones}"
       if [[ -z "$selected_ms" ]]; then
         echo "  ${DIM}No changes made.${RESET}"
       elif [[ "$selected_ms" == *"Remove"* ]]; then
-        glab issue update "$selected_iid" -m "" &>/dev/null && {
+        if glab issue update "$selected_iid" -m "" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Milestone removed"
-        } || {
+        else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
-        }
+        fi
       else
-        glab issue update "$selected_iid" -m "$selected_ms" &>/dev/null && {
+        if glab issue update "$selected_iid" -m "$selected_ms" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Milestone set to ${DIM}${selected_ms}${RESET}"
-        } || {
+        else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
-        }
+        fi
       fi
 
     # ─── Close issue ───
@@ -1456,11 +1489,11 @@ ${milestones}"
       echo -n "  ${BOLD}Close issue #${selected_iid}?${RESET} ${DIM}(y/n)${RESET} "
       read -r confirm_close
       if [[ "$confirm_close" == "y" ]]; then
-        glab issue close "$selected_iid" &>/dev/null && {
+        if glab issue close "$selected_iid" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Issue #${selected_iid} closed"
-        } || {
+        else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to close issue"
-        }
+        fi
       else
         echo "  ${DIM}Cancelled.${RESET}"
       fi
@@ -1533,7 +1566,10 @@ ${ICON_NEW} Manual"
 
     # Fetch existing GitLab issues (paginated) to find already-synced stories
     echo -n "  ${DIM}Checking synced issues...${RESET}"
-    local gl_page=1 gl_per_page=100 gl_page_json gl_page_count
+    gl_page=1
+    gl_per_page=100
+    gl_page_json=""
+    gl_page_count=0
     gl_issues_json="[]"
     while true; do
       gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
@@ -1674,7 +1710,8 @@ ${ICON_NEW} Manual"
 
     # Ensure Jira labels exist in GitLab
     echo -n "  ${DIM}Syncing labels...${RESET}"
-    existing_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r '.[].name' 2>/dev/null || echo "")
+    labels_json=$(fetch_all_labels)
+    existing_labels=$(jq -r '.[].name' <<< "$labels_json" 2>/dev/null || echo "")
     IFS=',' read -rA label_array <<< "$labels_csv"
     for lbl in "${label_array[@]}"; do
       if ! grep -qxF "$lbl" <<< "$existing_labels"; then
@@ -1686,7 +1723,7 @@ ${lbl}"
     printf "\r                                      \r"
 
     # Offer to add more labels
-    all_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r 'sort_by(.name) | .[].name' 2>/dev/null || echo "")
+    all_labels=$(jq -r 'sort_by(.name) | .[].name' <<< "$labels_json" 2>/dev/null || echo "")
     # Remove already-selected labels from the list
     available_labels=""
     while IFS= read -r lbl; do
@@ -1732,7 +1769,7 @@ ${lbl}"
     echo ""
 
     assignee=""
-    members_json=$(glab api "projects/$project_id/members/all?per_page=100" 2>/dev/null) || members_json="[]"
+    members_json=$(fetch_all_members)
     if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
       members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
     else
@@ -1784,34 +1821,37 @@ ${members}"
     milestone=""
     if [[ -n "$jira_epic_key" && "$jira_epic_key" != "null" ]]; then
       echo -n "  ${DIM}Fetching epic from Jira...${RESET}"
-      epic_response=$(curl -s \
+      if ! epic_response=$(curl -fsS \
         -H "Authorization: Bearer ${JIRA_TOKEN}" \
-        "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary,description")
-      epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_response")
-      epic_desc=$(jira_to_markdown "$(jq -r '.fields.description // ""' <<< "$epic_response")")
-      local ms_desc_full="${epic_desc:+$epic_desc
+        "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary,description"); then
+        printf "\r                                      \r"
+        echo "  ${YELLOW}${ICON_WARN}${RESET} Could not fetch epic ${DIM}${jira_epic_key}${RESET}"
+      else
+        epic_title=$(jq -r '.fields.summary // ""' <<< "$epic_response")
+        epic_desc=$(jira_to_markdown "$(jq -r '.fields.description // ""' <<< "$epic_response")")
+        ms_desc_full="${epic_desc:+$epic_desc
 
 }<!-- jira:${jira_epic_key} -->"
-      printf "\r                                      \r"
+        printf "\r                                      \r"
 
-      if [[ -n "$epic_title" ]]; then
-        ms_json=$(fetch_all_milestones)
-        # Match by Jira key in description first, then fall back to title
-        local existing_ms_id
-        existing_ms_id=$(jq -r --arg k "$jira_epic_key" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
-        if [[ -z "$existing_ms_id" ]]; then
-          existing_ms_id=$(jq -r --arg t "$epic_title" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
-        fi
+        if [[ -n "$epic_title" ]]; then
+          ms_json=$(fetch_all_milestones)
+          # Match by Jira key in description first, then fall back to title
+          existing_ms_id=$(jq -r --arg k "$jira_epic_key" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+          if [[ -z "$existing_ms_id" ]]; then
+            existing_ms_id=$(jq -r --arg t "$epic_title" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
+          fi
 
-        if [[ -z "$existing_ms_id" ]]; then
-          local ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" -f "description=$ms_desc_full")
-          "${ms_cmd[@]}" &>/dev/null
-          echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} created from epic ${DIM}${jira_epic_key}${RESET}"
-        else
-          glab api "projects/$project_id/milestones/$existing_ms_id" -X PUT -f "title=$epic_title" -f "description=$ms_desc_full" &>/dev/null
-          echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(updated)${RESET}"
+          if [[ -z "$existing_ms_id" ]]; then
+            ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" -f "description=$ms_desc_full")
+            "${ms_cmd[@]}" &>/dev/null
+            echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} created from epic ${DIM}${jira_epic_key}${RESET}"
+          else
+            glab api "projects/$project_id/milestones/$existing_ms_id" -X PUT -f "title=$epic_title" -f "description=$ms_desc_full" &>/dev/null
+            echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(updated)${RESET}"
+          fi
+          milestone="$epic_title"
         fi
-        milestone="$epic_title"
       fi
     else
       echo "  ${DIM}  no epic linked${RESET}"
