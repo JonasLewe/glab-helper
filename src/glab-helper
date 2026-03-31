@@ -184,7 +184,7 @@ get_default_branch() {
   local branch
   branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
   if [[ -z "$branch" ]]; then
-    branch=$(glab api "projects/$project_id" 2>/dev/null | jq -r '.default_branch // "main"')
+    branch=$(glab api "projects/$project_id" 2>/dev/null | jq -r '.default_branch // empty')
   fi
   echo "$branch"
 }
@@ -289,13 +289,25 @@ offer_branch_creation() {
     return
   fi
 
-  # Select base branch — list remote branches sorted by last commit date
+  # Fetch remote and select base branch
+  git fetch origin --quiet 2>/dev/null
   default_branch=$(get_default_branch)
 
-  git fetch origin --quiet 2>/dev/null
   branch_list=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/remotes/origin/ \
     | sed 's|^origin/||' \
     | grep -v '^HEAD$')
+
+  # Fall back to local branches if no remote branches found
+  if [[ -z "$branch_list" ]]; then
+    branch_list=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/heads/)
+  fi
+
+  if [[ -z "$branch_list" ]]; then
+    echo ""
+    echo "  ${YELLOW}${ICON_WARN}${RESET} No branches found. Create an initial commit first."
+    echo ""
+    return
+  fi
 
   # Move default branch to top of list
   if [[ -n "$default_branch" ]]; then
@@ -322,10 +334,23 @@ ${branch_list}"
     return
   fi
 
-  # Strip "(default)" suffix if present
-  selected_base="${selected_base% (default)}"
+  # Strip "(default)" suffix if present (escape parens for zsh EXTENDED_GLOB)
+  selected_base="${selected_base% \(default\)}"
 
-  branch_err=$(git branch "$branch_name" "origin/$selected_base" 2>&1) && {
+  # Resolve start point: prefer remote tracking branch, fall back to local
+  local start_point="origin/$selected_base"
+  if ! git show-ref --verify --quiet "refs/remotes/$start_point" 2>/dev/null; then
+    if git show-ref --verify --quiet "refs/heads/$selected_base" 2>/dev/null; then
+      start_point="$selected_base"
+    else
+      echo ""
+      echo "  ${RED}${ICON_WARN}${RESET} Branch ${BOLD}${selected_base}${RESET} not found (neither remote nor local)."
+      echo ""
+      return
+    fi
+  fi
+
+  branch_err=$(git branch "$branch_name" "$start_point" 2>&1) && {
     echo ""
     echo "  ${GREEN}${ICON_OK}${RESET} Branch ${BOLD}${branch_name}${RESET} created from ${DIM}${selected_base}${RESET}"
 
