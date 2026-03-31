@@ -147,6 +147,14 @@ Team members need access to the glab-helper project to read the variables.
 | [curl](https://curl.se/) | — | Jira API requests |
 | nvim or vim | — | Description editor (optional, falls back to `$VISUAL`/`$EDITOR`) |
 
+## Development
+
+Run the local smoke and syntax checks with:
+
+```bash
+./tests/run.sh
+```
+
 ## License
 
 MIT
