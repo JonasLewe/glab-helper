@@ -9,7 +9,7 @@
 #   ./install.sh
 #
 # What it does:
-#   1. Installs dependencies (glab, fzf, jq, curl) via brew/pacman
+#   1. Installs runtime dependencies (zsh, glab, fzf, jq, curl) via brew/pacman
 #   2. Symlinks src/glab-helper → ~/.local/bin/glab-helper
 
 set -e
@@ -31,8 +31,8 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo
 fi
 
-# ─── Install dependencies ───
-deps=(glab fzf jq curl)
+# ─── Install runtime dependencies ───
+deps=(zsh glab fzf jq curl)
 missing=()
 
 for cmd in "${deps[@]}"; do
@@ -66,6 +66,12 @@ fi
 
 echo
 
+if ! command -v zsh &>/dev/null; then
+    echo "zsh is required to run glab-helper, but it is still not available."
+    echo "   Please install zsh manually and re-run ./install.sh"
+    exit 1
+fi
+
 # ─── Symlink glab-helper to ~/.local/bin ───
 src="$REPO_DIR/src/glab-helper"
 dst="$BIN_DIR/glab-helper"
@@ -98,5 +104,6 @@ fi
 
 echo
 echo "Installation complete!"
+echo "   Runtime shell: $(command -v zsh)"
 echo "   Run 'glab-helper' from any GitLab repo to get started."
 echo

@@ -24,7 +24,7 @@ cd ~/.local/share/glab-helper
 ./install.sh
 ```
 
-This installs dependencies (`glab`, `fzf 0.35+`, `jq`, `curl`) and symlinks `glab-helper` to `~/.local/bin/`.
+This installs runtime dependencies (`zsh`, `glab`, `fzf 0.35+`, `jq`, `curl`) and symlinks `glab-helper` to `~/.local/bin/`.
 
 Make sure `~/.local/bin` is in your PATH:
 
@@ -141,6 +141,7 @@ Team members need access to the glab-helper project to read the variables.
 
 | Tool | Min version | Purpose |
 |------|-------------|---------|
+| zsh | 5+ | Runtime shell for `glab-helper` |
 | [glab](https://gitlab.com/gitlab-org/cli) | — | GitLab CLI |
 | [fzf](https://github.com/junegunn/fzf) | 0.35+ | Fuzzy finder |
 | [jq](https://jqlang.github.io/jq/) | — | JSON processing |
