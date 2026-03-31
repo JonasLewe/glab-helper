@@ -24,6 +24,11 @@
 # DEPENDENCIES: glab, fzf (0.35+), jq, curl, nvim (optional, falls back to vim)
 # ─────────────────────────────────────────────────────────────
 
+# Reset zsh options so user shell tracing/debug flags do not leak into the TUI.
+emulate -R zsh
+unsetopt xtrace verbose
+setopt typesetsilent
+
 # ─── Help flag ───
 DEV_MODE=false
 if [[ "$1" == "--dev" || "$1" == "-d" ]]; then
@@ -770,13 +775,13 @@ sync_stories() {
   local gl_page_json gl_page_count
   gl_issues_json="[]"
   while true; do
-    gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
+    gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=all&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
     gl_page_count=$(jq 'length' <<< "$gl_page_json")
     gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
     [[ "$gl_page_count" -lt "$gl_per_page" ]] && break
     ((gl_page++))
   done
-  synced_keys=$(jq -r '.[].title' <<< "$gl_issues_json" | grep -oE '\[[A-Z]+-[0-9]+\]' | tr -d '[]')
+  synced_keys=$(jq -r '.[].title | capture("^\\[(?<key>[A-Z]+-[0-9]+)\\](\\s|$)")?.key // empty' <<< "$gl_issues_json")
   printf "\r                                      \r"
 
   # Split into unsynced (new) and synced (update candidates)
@@ -925,7 +930,7 @@ sync_stories() {
   # Ensure all needed labels exist in GitLab
   echo -n "  ${DIM}Syncing labels...${RESET}"
   local existing_labels
-  existing_labels=$(glab label list -P 100 --output json 2>/dev/null | jq -r '.[].name' 2>/dev/null || echo "")
+  existing_labels=$(jq -r '.[].name' <<< "$(fetch_all_labels)" 2>/dev/null || echo "")
   local all_needed_labels
   all_needed_labels=$(jq -r '
     ([.[].fields.labels[]?] | unique) +
@@ -1024,26 +1029,36 @@ sync_stories() {
     # Refresh milestone list (new ones may have just been created)
     ms_json=$(fetch_all_milestones)
 
-    local s_key s_summary s_priority s_labels_json s_epic_key
-    local gl_issue gl_iid gl_title gl_labels_csv gl_milestone
-    local new_title jira_labels merged_labels new_milestone changed cmd
     while IFS= read -r story; do
       s_key=$(jq -r '.key' <<< "$story")
       s_summary=$(jq -r '.fields.summary' <<< "$story")
+      s_desc=$(jq -r '.fields.description // ""' <<< "$story")
       s_priority=$(jq -r '.fields.priority.name // ""' <<< "$story")
       s_labels_json=$(jq '.fields.labels // []' <<< "$story")
       s_epic_key=$(jq -r '.fields.customfield_10000 // ""' <<< "$story")
+      s_subtasks_json=$(jq '.fields.subtasks // []' <<< "$story")
 
       # Find corresponding GitLab issue
-      gl_issue=$(jq -c --arg k "$s_key" '.[] | select(.title | contains("[" + $k + "]"))' <<< "$gl_issues_json" | head -1)
+      gl_issue=$(jq -c --arg k "$s_key" '.[] | select(.title | test("^\\[" + $k + "\\](\\s|$)"))' <<< "$gl_issues_json" | head -1)
       [[ -z "$gl_issue" ]] && continue
       gl_iid=$(jq -r '.iid' <<< "$gl_issue")
       gl_title=$(jq -r '.title' <<< "$gl_issue")
+      gl_description=$(jq -r '.description // ""' <<< "$gl_issue")
       gl_labels_csv=$(jq -r '[.labels[]?] | join(",")' <<< "$gl_issue")
       gl_milestone=$(jq -r '.milestone.title // ""' <<< "$gl_issue")
 
       # Build expected values from Jira
       new_title="[${s_key}] ${s_summary}"
+      new_description=$(jira_to_markdown "$s_desc")
+      st_count=$(jq 'length' <<< "$s_subtasks_json")
+      if [[ "$st_count" -gt 0 ]]; then
+        new_description="${new_description}"$'\n\n'"## Subtasks"
+        while IFS= read -r st; do
+          st_key=$(jq -r '.key' <<< "$st")
+          st_summary=$(jq -r '.fields.summary' <<< "$st")
+          new_description="${new_description}"$'\n'"- [ ] ${st_key}: ${st_summary}"
+        done < <(jq -c '.[]' <<< "$s_subtasks_json")
+      fi
 
       # Merge labels: existing GitLab labels + Jira labels + priority label
       jira_labels=$(jq -r '.[]' <<< "$s_labels_json")
@@ -1073,6 +1088,7 @@ sync_stories() {
       # Check if anything changed
       changed=false
       [[ "$new_title" != "$gl_title" ]] && changed=true
+      [[ "$new_description" != "$gl_description" ]] && changed=true
       [[ "$merged_labels" != "$gl_labels_csv" ]] && changed=true
       [[ "$new_milestone" != "$gl_milestone" ]] && changed=true
 
@@ -1084,10 +1100,13 @@ sync_stories() {
       # Build update command
       cmd=(glab api "projects/$project_id/issues/$gl_iid" -X PUT)
       cmd+=(-f "title=$new_title")
+      cmd+=(-f "description=$new_description")
       [[ -n "$merged_labels" ]] && cmd+=(-f "labels=$merged_labels")
       if [[ -n "$new_milestone" ]]; then
         ms_id=$(jq -r --arg t "$new_milestone" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
         [[ -n "$ms_id" ]] && cmd+=(-f "milestone_id=$ms_id")
+      elif [[ -n "$gl_milestone" ]]; then
+        cmd+=(-f "milestone_id=0")
       fi
 
       if retry 3 "${cmd[@]}"; then
