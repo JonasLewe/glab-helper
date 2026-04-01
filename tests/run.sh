@@ -927,6 +927,568 @@ EOF
   pass "$name"
 }
 
+run_sync_stories_dry_run_status_forward_smoke() {
+  local name="sync-stories-dry-run-status-forward-smoke"
+  local tmpdir stubdir responses_file output
+
+  tmpdir="$(mktemp -d)"
+  stubdir="$tmpdir/bin"
+  responses_file="$tmpdir/fzf-responses"
+  mkdir -p "$stubdir"
+
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  cat >"$responses_file" <<'EOF'
+~ Preview story sync from Jira
+EOF
+
+  cat >"$stubdir/clear" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$stubdir/fzf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+responses_file="${FZF_RESPONSES_FILE:?}"
+if [[ ! -s "$responses_file" ]]; then
+  exit 1
+fi
+response="$(head -n 1 "$responses_file")"
+tail -n +2 "$responses_file" >"${responses_file}.tmp"
+mv "${responses_file}.tmp" "$responses_file"
+printf '%s\n' "$response"
+EOF
+
+  cat >"$stubdir/glab" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+    printf '%s\n' '{"value":"https://jira.example.com"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+    printf '%s\n' '{"value":"team-a"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+    printf '%s\n' '{"value":"token"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api projects/1/issues?state=all&per_page=100&page=1")
+    printf '%s\n' '[{"iid":42,"state":"opened","title":"[PROJ-1] Regression coverage","description":"## Summary","labels":["manual","team-a","prio::high"],"milestone":null}]'
+    ;;
+  "api projects/1/labels?per_page=100&page=1")
+    printf '%s\n' '[{"name":"manual"},{"name":"team-a"},{"name":"prio::high"},{"name":"status::in-progress"}]'
+    ;;
+  "api projects/1/milestones?state=active&per_page=100&page=1")
+    printf '%s\n' '[]'
+    ;;
+  *)
+    printf 'unexpected glab invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat >"$stubdir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Story"* )
+    printf '%s\n' '{"issues":[{"key":"PROJ-1","fields":{"summary":"Regression coverage","description":"h2. Summary","status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},"priority":{"name":"high"},"labels":["team-a"],"customfield_10000":"","subtasks":[]}}],"total":1}'
+    ;;
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Epic"* )
+    printf '%s\n' '{"issues":[],"total":0}'
+    ;;
+  *)
+    printf 'unexpected curl invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_RESPONSES_FILE="$responses_file" \
+    "$ROOT_DIR/src/glab-helper" --dev --dry-run 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$output" != *"(status)"* || "$output" != *"status: open -> in-progress"* || "$output" == *"labels:"* ]]; then
+    fail "$name" "$output"
+  fi
+
+  pass "$name"
+}
+
+run_sync_stories_dry_run_status_no_regression_smoke() {
+  local name="sync-stories-dry-run-status-no-regression-smoke"
+  local tmpdir stubdir responses_file output
+
+  tmpdir="$(mktemp -d)"
+  stubdir="$tmpdir/bin"
+  responses_file="$tmpdir/fzf-responses"
+  mkdir -p "$stubdir"
+
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  cat >"$responses_file" <<'EOF'
+~ Preview story sync from Jira
+EOF
+
+  cat >"$stubdir/clear" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$stubdir/fzf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+responses_file="${FZF_RESPONSES_FILE:?}"
+if [[ ! -s "$responses_file" ]]; then
+  exit 1
+fi
+response="$(head -n 1 "$responses_file")"
+tail -n +2 "$responses_file" >"${responses_file}.tmp"
+mv "${responses_file}.tmp" "$responses_file"
+printf '%s\n' "$response"
+EOF
+
+  cat >"$stubdir/glab" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+    printf '%s\n' '{"value":"https://jira.example.com"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+    printf '%s\n' '{"value":"team-a"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+    printf '%s\n' '{"value":"token"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api projects/1/issues?state=all&per_page=100&page=1")
+    printf '%s\n' '[{"iid":42,"state":"opened","title":"[PROJ-1] Regression coverage","description":"## Summary","labels":["manual","team-a","prio::high","status::review"],"milestone":null}]'
+    ;;
+  "api projects/1/labels?per_page=100&page=1")
+    printf '%s\n' '[{"name":"manual"},{"name":"team-a"},{"name":"prio::high"},{"name":"status::review"}]'
+    ;;
+  "api projects/1/milestones?state=active&per_page=100&page=1")
+    printf '%s\n' '[]'
+    ;;
+  *)
+    printf 'unexpected glab invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat >"$stubdir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Story"* )
+    printf '%s\n' '{"issues":[{"key":"PROJ-1","fields":{"summary":"Regression coverage","description":"h2. Summary","status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},"priority":{"name":"high"},"labels":["team-a"],"customfield_10000":"","subtasks":[]}}],"total":1}'
+    ;;
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Epic"* )
+    printf '%s\n' '{"issues":[],"total":0}'
+    ;;
+  *)
+    printf 'unexpected curl invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_RESPONSES_FILE="$responses_file" \
+    "$ROOT_DIR/src/glab-helper" --dev --dry-run 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$output" != *"No issue updates required."* || "$output" != *"1 synced issues already up-to-date"* || "$output" == *"status:"* ]]; then
+    fail "$name" "$output"
+  fi
+
+  pass "$name"
+}
+
+run_sync_stories_create_done_smoke() {
+  local name="sync-stories-create-done-smoke"
+  local tmpdir stubdir responses_file output
+
+  tmpdir="$(mktemp -d)"
+  stubdir="$tmpdir/bin"
+  responses_file="$tmpdir/fzf-responses"
+  mkdir -p "$stubdir"
+
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  cat >"$responses_file" <<'EOF'
+~ Sync stories from Jira
+EOF
+
+  cat >"$stubdir/clear" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$stubdir/fzf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+responses_file="${FZF_RESPONSES_FILE:?}"
+if [[ ! -s "$responses_file" ]]; then
+  exit 1
+fi
+response="$(head -n 1 "$responses_file")"
+tail -n +2 "$responses_file" >"${responses_file}.tmp"
+mv "${responses_file}.tmp" "$responses_file"
+printf '%s\n' "$response"
+EOF
+
+  cat >"$stubdir/glab" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+    printf '%s\n' '{"value":"https://jira.example.com"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+    printf '%s\n' '{"value":"team-a"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+    printf '%s\n' '{"value":"token"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api projects/1/issues?state=all&per_page=100&page=1")
+    printf '%s\n' '[]'
+    ;;
+  "api projects/1/labels?per_page=100&page=1")
+    printf '%s\n' '[{"name":"team-a"},{"name":"prio::high"}]'
+    ;;
+  "api projects/1/milestones?state=active&per_page=100&page=1")
+    printf '%s\n' '[]'
+    ;;
+  "api projects/1/issues -X POST -f title=[PROJ-1] Done story -f description=## Summary -f labels=team-a,prio::high")
+    printf '%s\n' '{"iid":42}'
+    ;;
+  "api projects/1/issues/42 -X PUT -f state_event=close")
+    printf '%s\n' '{}'
+    ;;
+  *)
+    printf 'unexpected glab invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat >"$stubdir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Story"* )
+    printf '%s\n' '{"issues":[{"key":"PROJ-1","fields":{"summary":"Done story","description":"h2. Summary","status":{"name":"Done","statusCategory":{"key":"done"}},"priority":{"name":"high"},"labels":["team-a"],"customfield_10000":"","subtasks":[]}}],"total":1}'
+    ;;
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Epic"* )
+    printf '%s\n' '{"issues":[],"total":0}'
+    ;;
+  *)
+    printf 'unexpected curl invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_RESPONSES_FILE="$responses_file" \
+    "$ROOT_DIR/src/glab-helper" <<< $'y\nn\n' 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$output" != *"(status: done)"* || "$output" != *"[PROJ-1] Done story"* || "$output" != *"(closed)"* || "$output" != *"1 created"* ]]; then
+    fail "$name" "$output"
+  fi
+
+  pass "$name"
+}
+
+run_sync_stories_update_status_forward_smoke() {
+  local name="sync-stories-update-status-forward-smoke"
+  local tmpdir stubdir responses_file output
+
+  tmpdir="$(mktemp -d)"
+  stubdir="$tmpdir/bin"
+  responses_file="$tmpdir/fzf-responses"
+  mkdir -p "$stubdir"
+
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  cat >"$responses_file" <<'EOF'
+~ Sync stories from Jira
+EOF
+
+  cat >"$stubdir/clear" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$stubdir/fzf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+responses_file="${FZF_RESPONSES_FILE:?}"
+if [[ ! -s "$responses_file" ]]; then
+  exit 1
+fi
+response="$(head -n 1 "$responses_file")"
+tail -n +2 "$responses_file" >"${responses_file}.tmp"
+mv "${responses_file}.tmp" "$responses_file"
+printf '%s\n' "$response"
+EOF
+
+  cat >"$stubdir/glab" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+    printf '%s\n' '{"value":"https://jira.example.com"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+    printf '%s\n' '{"value":"team-a"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+    printf '%s\n' '{"value":"token"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api projects/1/issues?state=all&per_page=100&page=1")
+    printf '%s\n' '[{"iid":42,"state":"opened","title":"[PROJ-1] Regression coverage","description":"## Summary","labels":["manual","team-a","prio::high"],"milestone":null}]'
+    ;;
+  "api projects/1/labels?per_page=100&page=1")
+    printf '%s\n' '[{"name":"manual"},{"name":"team-a"},{"name":"prio::high"},{"name":"status::in-progress"}]'
+    ;;
+  "api projects/1/milestones?state=active&per_page=100&page=1")
+    printf '%s\n' '[]'
+    ;;
+  api\ projects/1/issues/42\ -X\ PUT*)
+    case "$*" in
+      *"labels=manual,team-a,prio::high,status::in-progress"*)
+        if [[ "$*" == *"title="* || "$*" == *"description="* || "$*" == *"milestone_id="* || "$*" == *"state_event="* ]]; then
+          printf 'unexpected extra fields in status-forward payload: %s\n' "$*" >&2
+          exit 1
+        fi
+        printf '%s\n' '{}'
+        ;;
+      *)
+        printf 'unexpected update payload: %s\n' "$*" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    printf 'unexpected glab invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat >"$stubdir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Story"* )
+    printf '%s\n' '{"issues":[{"key":"PROJ-1","fields":{"summary":"Regression coverage","description":"h2. Summary","status":{"name":"In Progress","statusCategory":{"key":"indeterminate"}},"priority":{"name":"high"},"labels":["team-a"],"customfield_10000":"","subtasks":[]}}],"total":1}'
+    ;;
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Epic"* )
+    printf '%s\n' '{"issues":[],"total":0}'
+    ;;
+  *)
+    printf 'unexpected curl invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_RESPONSES_FILE="$responses_file" \
+    "$ROOT_DIR/src/glab-helper" <<< $'y\nn\n' 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$output" != *"(status)"* || "$output" != *"status: open -> in-progress"* || "$output" != *"1 updated"* ]]; then
+    fail "$name" "$output"
+  fi
+
+  pass "$name"
+}
+
+run_sync_stories_update_status_done_smoke() {
+  local name="sync-stories-update-status-done-smoke"
+  local tmpdir stubdir responses_file output
+
+  tmpdir="$(mktemp -d)"
+  stubdir="$tmpdir/bin"
+  responses_file="$tmpdir/fzf-responses"
+  mkdir -p "$stubdir"
+
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  cat >"$responses_file" <<'EOF'
+~ Sync stories from Jira
+EOF
+
+  cat >"$stubdir/clear" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$stubdir/fzf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+responses_file="${FZF_RESPONSES_FILE:?}"
+if [[ ! -s "$responses_file" ]]; then
+  exit 1
+fi
+response="$(head -n 1 "$responses_file")"
+tail -n +2 "$responses_file" >"${responses_file}.tmp"
+mv "${responses_file}.tmp" "$responses_file"
+printf '%s\n' "$response"
+EOF
+
+  cat >"$stubdir/glab" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+    printf '%s\n' '{"value":"https://jira.example.com"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+    printf '%s\n' '{"value":"team-a"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+    printf '%s\n' '{"value":"token"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api projects/1/issues?state=all&per_page=100&page=1")
+    printf '%s\n' '[{"iid":42,"state":"opened","title":"[PROJ-1] Regression coverage","description":"## Summary","labels":["manual","team-a","prio::high","status::review"],"milestone":null}]'
+    ;;
+  "api projects/1/labels?per_page=100&page=1")
+    printf '%s\n' '[{"name":"manual"},{"name":"team-a"},{"name":"prio::high"},{"name":"status::review"}]'
+    ;;
+  "api projects/1/milestones?state=active&per_page=100&page=1")
+    printf '%s\n' '[]'
+    ;;
+  api\ projects/1/issues/42\ -X\ PUT*)
+    case "$*" in
+      *"labels=manual,team-a,prio::high"*\
+*"state_event=close"*)
+        if [[ "$*" == *"title="* || "$*" == *"description="* || "$*" == *"milestone_id="* ]]; then
+          printf 'unexpected extra fields in status-done payload: %s\n' "$*" >&2
+          exit 1
+        fi
+        printf '%s\n' '{}'
+        ;;
+      *)
+        printf 'unexpected update payload: %s\n' "$*" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    printf 'unexpected glab invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat >"$stubdir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Story"* )
+    printf '%s\n' '{"issues":[{"key":"PROJ-1","fields":{"summary":"Regression coverage","description":"h2. Summary","status":{"name":"Done","statusCategory":{"key":"done"}},"priority":{"name":"high"},"labels":["team-a"],"customfield_10000":"","subtasks":[]}}],"total":1}'
+    ;;
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Epic"* )
+    printf '%s\n' '{"issues":[],"total":0}'
+    ;;
+  *)
+    printf 'unexpected curl invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_RESPONSES_FILE="$responses_file" \
+    "$ROOT_DIR/src/glab-helper" <<< $'y\nn\n' 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$output" != *"(status)"* || "$output" != *"status: review -> done"* || "$output" != *"1 updated"* ]]; then
+    fail "$name" "$output"
+  fi
+
+  pass "$name"
+}
+
 run_sync_stories_update_milestone_description_only_smoke() {
   local name="sync-stories-update-milestone-description-only-smoke"
   local tmpdir stubdir responses_file output
@@ -1312,6 +1874,11 @@ run_sync_stories_dry_run_noop_smoke
 run_sync_stories_dry_run_mixed_plan_smoke
 run_sync_stories_dry_run_ignored_suspicious_epic_smoke
 run_sync_stories_dry_run_trimmed_titles_noop_smoke
+run_sync_stories_dry_run_status_forward_smoke
+run_sync_stories_dry_run_status_no_regression_smoke
+run_sync_stories_create_done_smoke
+run_sync_stories_update_status_forward_smoke
+run_sync_stories_update_status_done_smoke
 run_sync_stories_update_milestone_description_only_smoke
 run_sync_stories_update_smoke
 run_sync_stories_update_title_only_smoke
