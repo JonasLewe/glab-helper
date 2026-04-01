@@ -1241,7 +1241,7 @@ EOF
     fail "$name" "$output"
   fi
 
-  if [[ "$output" != *"(status: done)"* || "$output" != *"[PROJ-1] Done story"* || "$output" != *"(closed)"* || "$output" != *"1 created"* ]]; then
+  if [[ "$output" != *"(status: done)"* || "$output" != *"[PROJ-1] Done story"* || "$output" != *"(closed)"* || "$output" != *"1 created"* || "$output" != *"Skipping snapshot prompt: no existing issues or milestones to back up"* || "$output" == *"Create local snapshot first?"* ]]; then
     fail "$name" "$output"
   fi
 

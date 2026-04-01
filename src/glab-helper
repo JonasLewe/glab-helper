@@ -1063,7 +1063,7 @@ sync_stories() {
   local dry_run=false
   local gl_issues_json synced_keys unsynced_json synced_json
   local gl_page=1 gl_per_page=100 gl_page_json gl_page_count
-  local unsynced_count synced_count preview_uptodate=0
+  local unsynced_count synced_count preview_uptodate=0 gl_issue_count=0 existing_milestone_count=0
   local ms_json labels_json existing_labels plan_labels_csv
   local ms_match ms_id old_ms_title old_ms_desc
   local gl_issue gl_iid gl_title gl_description gl_labels_csv gl_milestone gl_state
@@ -1117,6 +1117,7 @@ sync_stories() {
     ((gl_page++))
   done
   synced_keys=$(jq -r '.[].title | capture("^\\[(?<key>[A-Z]+-[0-9]+)\\](\\s|$)")?.key // empty' <<< "$gl_issues_json")
+  gl_issue_count=$(jq 'length' <<< "$gl_issues_json")
   printf "\r                                      \r"
 
   unsynced_json=$(jq --arg synced "$synced_keys" '
@@ -1166,6 +1167,7 @@ sync_stories() {
   fi
 
   ms_json=$(fetch_all_milestones)
+  existing_milestone_count=$(jq 'length' <<< "$ms_json")
 
   for ekey in "${(@k)epic_titles}"; do
     ms_match=$(jq -c --arg k "$ekey" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] // empty' <<< "$ms_json" 2>/dev/null)
@@ -1519,15 +1521,19 @@ sync_stories() {
   fi
 
   echo ""
-  echo -n "  ${BOLD}Create local snapshot first?${RESET} ${DIM}(y/n)${RESET} "
-  read -r snapshot_confirm
-  if [[ "$snapshot_confirm" == "y" ]]; then
-    echo ""
-    if ! export_gitlab_snapshot "pre-sync-stories"; then
-      echo "  ${RED}${ICON_WARN}${RESET} Sync aborted because snapshot export failed."
+  if [[ "$gl_issue_count" -gt 0 || "$existing_milestone_count" -gt 0 ]]; then
+    echo -n "  ${BOLD}Create local snapshot first?${RESET} ${DIM}(y/n)${RESET} "
+    read -r snapshot_confirm
+    if [[ "$snapshot_confirm" == "y" ]]; then
       echo ""
-      return 1
+      if ! export_gitlab_snapshot "pre-sync-stories"; then
+        echo "  ${RED}${ICON_WARN}${RESET} Sync aborted because snapshot export failed."
+        echo ""
+        return 1
+      fi
     fi
+  else
+    echo "  ${DIM}Skipping snapshot prompt: no existing issues or milestones to back up${RESET}"
   fi
 
   echo ""
