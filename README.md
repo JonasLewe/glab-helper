@@ -61,10 +61,11 @@ This should show your GitLab instance and username. The token is stored locally 
 Run from any cloned GitLab repo:
 
 ```bash
-glab-helper [--dev]
+glab-helper [--dev] [--dry-run]
 ```
 
 The `--dev` flag enables developer mode — advanced commands and skips the Jira target project check, allowing you to use Jira sync features against any repo.
+The `--dry-run` flag exposes the explicit preview-only story sync action, intended for use together with `--dev`.
 
 You'll be presented with the following options (Jira options only appear when integration is configured):
 
