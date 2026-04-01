@@ -852,6 +852,21 @@ build_story_sync_description() {
   printf '%s\n' "$description"
 }
 
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s\n' "$value"
+}
+
+is_suspicious_jira_epic_title() {
+  local normalized
+  normalized="$(trim_whitespace "$1")"
+  [[ -z "$normalized" ]] && return 0
+  [[ "$normalized" == *[[:alnum:]]* ]] && return 1
+  return 0
+}
+
 build_story_sync_labels_csv() {
   local labels_json="$1"
   local priority="$2"
@@ -945,15 +960,17 @@ sync_stories() {
   local created=0 failed=0 issue_updated=0 issue_uptodate=0 labels_created=0
   local ms_created=0 ms_updated=0 ms_failed=0
   local cmd output attempt max_attempts success
-  local ms_title ms_desc
+  local ms_title ms_desc ignored_title story_uses_ignored_epic=false
   local -a new_ms_plan=()
   local -a update_ms_plan=()
   local -a issue_create_plan=()
   local -a issue_update_plan=()
   local -a missing_project_labels=()
+  local -a ignored_epic_plan=()
   local -a changed_fields=()
   typeset -A epic_titles
   typeset -A epic_descs
+  typeset -A ignored_epic_titles
   typeset -A missing_label_seen
 
   [[ "$sync_mode" == "dry-run" ]] && dry_run=true
@@ -1013,8 +1030,14 @@ sync_stories() {
     while IFS= read -r epic; do
       [[ -z "$epic" ]] && continue
       ekey=$(jq -r '.key' <<< "$epic")
-      etitle=$(jq -r '.fields.summary' <<< "$epic")
+      etitle=$(trim_whitespace "$(jq -r '.fields.summary // ""' <<< "$epic")")
       edesc=$(jq -r '.fields.description // ""' <<< "$epic")
+      if is_suspicious_jira_epic_title "$etitle"; then
+        ignored_title="${etitle:-<empty>}"
+        ignored_epic_titles[$ekey]="$ignored_title"
+        ignored_epic_plan+=("$(jq -n --arg key "$ekey" --arg title "$ignored_title" '{key:$key, title:$title}')")
+        continue
+      fi
       if [[ -n "$etitle" ]]; then
         epic_titles[$ekey]="$etitle"
         mdesc=$(jira_to_markdown "$edesc")
@@ -1052,7 +1075,7 @@ sync_stories() {
     else
       title_changed=false
       description_changed=false
-      [[ "${epic_titles[$ekey]}" != "$old_ms_title" ]] && title_changed=true
+      [[ "$(trim_whitespace "${epic_titles[$ekey]}")" != "$(trim_whitespace "$old_ms_title")" ]] && title_changed=true
       [[ "${epic_descs[$ekey]:-}" != "$old_ms_desc" ]] && description_changed=true
 
       if $title_changed || $description_changed; then
@@ -1081,7 +1104,7 @@ sync_stories() {
 
   while IFS= read -r story; do
     s_key=$(jq -r '.key' <<< "$story")
-    s_summary=$(jq -r '.fields.summary' <<< "$story")
+    s_summary=$(trim_whitespace "$(jq -r '.fields.summary // ""' <<< "$story")")
     s_desc=$(jq -r '.fields.description // ""' <<< "$story")
     s_priority=$(jq -r '.fields.priority.name // ""' <<< "$story")
     s_labels_json=$(jq '.fields.labels // []' <<< "$story")
@@ -1093,7 +1116,9 @@ sync_stories() {
     labels_csv=$(build_story_sync_labels_csv "$s_labels_json" "$s_priority")
     new_milestone=""
     if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
-      new_milestone="${epic_titles[$s_epic_key]:-}"
+      if [[ -z "${ignored_epic_titles[$s_epic_key]:-}" ]]; then
+        new_milestone="${epic_titles[$s_epic_key]:-}"
+      fi
     fi
 
     issue_plan=$(jq -n \
@@ -1110,7 +1135,7 @@ sync_stories() {
   if [[ "$synced_count" -gt 0 ]]; then
     while IFS= read -r story; do
       s_key=$(jq -r '.key' <<< "$story")
-      s_summary=$(jq -r '.fields.summary' <<< "$story")
+      s_summary=$(trim_whitespace "$(jq -r '.fields.summary // ""' <<< "$story")")
       s_desc=$(jq -r '.fields.description // ""' <<< "$story")
       s_priority=$(jq -r '.fields.priority.name // ""' <<< "$story")
       s_labels_json=$(jq '.fields.labels // []' <<< "$story")
@@ -1141,20 +1166,28 @@ sync_stories() {
       fi
 
       new_milestone=""
+      story_uses_ignored_epic=false
       if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
-        new_milestone="${epic_titles[$s_epic_key]:-}"
+        if [[ -n "${ignored_epic_titles[$s_epic_key]:-}" ]]; then
+          story_uses_ignored_epic=true
+          new_milestone="$gl_milestone"
+        else
+          new_milestone="${epic_titles[$s_epic_key]:-}"
+        fi
       fi
 
       title_changed=false
       description_changed=false
       labels_changed=false
       milestone_changed=false
-      [[ "$new_title" != "$gl_title" ]] && title_changed=true
+      [[ "$(trim_whitespace "$new_title")" != "$(trim_whitespace "$gl_title")" ]] && title_changed=true
       [[ "$new_description" != "$gl_description" ]] && description_changed=true
       if ! csv_sets_equal "$merged_labels" "$gl_labels_csv"; then
         labels_changed=true
       fi
-      [[ "$new_milestone" != "$gl_milestone" ]] && milestone_changed=true
+      if ! $story_uses_ignored_epic && [[ "$(trim_whitespace "$new_milestone")" != "$(trim_whitespace "$gl_milestone")" ]]; then
+        milestone_changed=true
+      fi
 
       if ! $title_changed && ! $description_changed && ! $labels_changed && ! $milestone_changed; then
         ((preview_uptodate++))
@@ -1227,6 +1260,12 @@ sync_stories() {
       if [[ "$(jq -r '.description_changed' <<< "$milestone_plan")" == "true" ]]; then
         echo "      description: changed"
       fi
+    done
+  fi
+  if [[ ${#ignored_epic_plan[@]} -gt 0 ]]; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} ${#ignored_epic_plan[@]} suspicious Jira epics ignored:"
+    for milestone_plan in "${ignored_epic_plan[@]}"; do
+      echo "    [$(jq -r '.key' <<< "$milestone_plan")] $(jq -r '.title' <<< "$milestone_plan")"
     done
   fi
   if [[ ${#missing_project_labels[@]} -gt 0 ]]; then
