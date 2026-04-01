@@ -166,6 +166,211 @@ EOF
   pass "$name"
 }
 
+run_snapshot_export_smoke() {
+  local name="snapshot-export-smoke"
+  local tmpdir workdir stubdir responses_file output snapshot_root snapshot_dir
+
+  tmpdir="$(mktemp -d)"
+  workdir="$tmpdir/work"
+  stubdir="$tmpdir/bin"
+  responses_file="$tmpdir/fzf-responses"
+  mkdir -p "$workdir" "$stubdir"
+
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  cat >"$responses_file" <<'EOF'
+▸ Export GitLab snapshot
+EOF
+
+  cat >"$stubdir/clear" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$stubdir/fzf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+responses_file="${FZF_RESPONSES_FILE:?}"
+if [[ ! -s "$responses_file" ]]; then
+  exit 1
+fi
+response="$(head -n 1 "$responses_file")"
+tail -n +2 "$responses_file" >"${responses_file}.tmp"
+mv "${responses_file}.tmp" "$responses_file"
+printf '%s\n' "$response"
+EOF
+
+  cat >"$stubdir/glab" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+    printf '%s\n' '{"value":"https://jira.example.com"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+    printf '%s\n' '{"value":"team-a"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+    printf '%s\n' '{"value":"token"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api projects/1/issues?per_page=100&page=1")
+    printf '%s\n' '[{"iid":11,"title":"Snapshot issue"}]'
+    ;;
+  "api projects/1/labels?per_page=100&page=1")
+    printf '%s\n' '[{"name":"manual"}]'
+    ;;
+  "api projects/1/milestones?per_page=100&page=1")
+    printf '%s\n' '[{"id":9,"title":"Snapshot milestone"}]'
+    ;;
+  *)
+    printf 'unexpected glab invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab"
+
+  if ! output="$(
+    cd "$workdir"
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_RESPONSES_FILE="$responses_file" \
+    "$ROOT_DIR/src/glab-helper" 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  snapshot_root="$workdir/.glab-helper-snapshots"
+  snapshot_dir="$(find "$snapshot_root" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+
+  if [[ -z "$snapshot_dir" || ! -f "$snapshot_dir/issues.json" || ! -f "$snapshot_dir/milestones.json" || ! -f "$snapshot_dir/labels.json" || ! -f "$snapshot_dir/metadata.json" ]]; then
+    fail "$name" "$output"
+  fi
+
+  if ! grep -q 'Snapshot issue' "$snapshot_dir/issues.json" || ! grep -q 'Snapshot milestone' "$snapshot_dir/milestones.json" || ! grep -q 'manual' "$snapshot_dir/labels.json"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$output" != *"Snapshot exported to"* ]]; then
+    fail "$name" "$output"
+  fi
+
+  pass "$name"
+}
+
+run_sync_stories_dry_run_smoke() {
+  local name="sync-stories-dry-run-smoke"
+  local tmpdir stubdir responses_file output
+
+  tmpdir="$(mktemp -d)"
+  stubdir="$tmpdir/bin"
+  responses_file="$tmpdir/fzf-responses"
+  mkdir -p "$stubdir"
+
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  cat >"$responses_file" <<'EOF'
+~ Preview story sync from Jira
+EOF
+
+  cat >"$stubdir/clear" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"$stubdir/fzf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+responses_file="${FZF_RESPONSES_FILE:?}"
+if [[ ! -s "$responses_file" ]]; then
+  exit 1
+fi
+response="$(head -n 1 "$responses_file")"
+tail -n +2 "$responses_file" >"${responses_file}.tmp"
+mv "${responses_file}.tmp" "$responses_file"
+printf '%s\n' "$response"
+EOF
+
+  cat >"$stubdir/glab" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+    printf '%s\n' '{"value":"https://jira.example.com"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+    printf '%s\n' '{"value":"team-a"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+    printf '%s\n' '{"value":"token"}'
+    ;;
+  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api projects/1/issues?state=all&per_page=100&page=1")
+    printf '%s\n' '[{"iid":42,"title":"[PROJ-1] Old summary","description":"Old description","labels":["manual","prio::low"],"milestone":{"title":"Legacy Epic"}}]'
+    ;;
+  "api projects/1/labels?per_page=100&page=1")
+    printf '%s\n' '[{"name":"manual"},{"name":"team-a"},{"name":"prio::high"}]'
+    ;;
+  "api projects/1/milestones?state=active&per_page=100&page=1")
+    printf '%s\n' '[]'
+    ;;
+  *)
+    printf 'unexpected glab invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat >"$stubdir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Story"* )
+    printf '%s\n' '{"issues":[{"key":"PROJ-1","fields":{"summary":"Regression coverage","description":"h2. Summary","status":{"name":"To Do"},"priority":{"name":"high"},"labels":["team-a"],"customfield_10000":"","subtasks":[]}}],"total":1}'
+    ;;
+  *"/rest/api/2/search?"*"issuetype%20%3D%20Epic"* )
+    printf '%s\n' '{"issues":[],"total":0}'
+    ;;
+  *)
+    printf 'unexpected curl invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_RESPONSES_FILE="$responses_file" \
+    "$ROOT_DIR/src/glab-helper" 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$output" != *"Dry-run complete"* || "$output" != *"[PROJ-1] Regression coverage"* || "$output" != *"(title, description, labels, milestone)"* || "$output" != *"No GitLab changes were applied."* ]]; then
+    fail "$name" "$output"
+  fi
+
+  pass "$name"
+}
+
 run_sync_stories_update_smoke() {
   local name="sync-stories-update-smoke"
   local tmpdir stubdir responses_file output
@@ -273,7 +478,7 @@ EOF
     PATH="$stubdir:$PATH" \
     TERM=xterm \
     FZF_RESPONSES_FILE="$responses_file" \
-    "$ROOT_DIR/src/glab-helper" <<< $'y\n' 2>&1
+    "$ROOT_DIR/src/glab-helper" <<< $'y\nn\n' 2>&1
   )"; then
     fail "$name" "$output"
   fi
@@ -302,6 +507,8 @@ fi
 run_help_check "help-smoke" "$ROOT_DIR/src/glab-helper" --help
 run_help_check "dev-help-smoke" "$ROOT_DIR/src/glab-helper" --dev --help
 run_jira_flow_smoke
+run_snapshot_export_smoke
+run_sync_stories_dry_run_smoke
 run_sync_stories_update_smoke
 
 printf 'All tests passed.\n'

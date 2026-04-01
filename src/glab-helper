@@ -196,7 +196,10 @@ get_default_branch() {
 
 # Fetch milestones with pagination (optional state filter, default: active)
 fetch_all_milestones() {
-  local state="${1:-active}" page=1 per_page=100 all="[]" page_json count
+  local state="active" page=1 per_page=100 all="[]" page_json count
+  if [[ $# -gt 0 ]]; then
+    state="$1"
+  fi
   local state_filter=""
   [[ -n "$state" ]] && state_filter="state=${state}&"
   while true; do
@@ -612,6 +615,52 @@ fetch_all_members() {
   printf '%s\n' "$all"
 }
 
+export_gitlab_snapshot() {
+  local label="${1:-manual}"
+  local snapshot_root="$PWD/.glab-helper-snapshots"
+  local snapshot_dir snapshot_slug timestamp created_at
+  local issues_json milestones_json labels_json
+
+  timestamp=$(date +%Y%m%d-%H%M%S)
+  created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  snapshot_slug=$(slugify "$label")
+  snapshot_dir="${snapshot_root}/${timestamp}-${snapshot_slug}"
+
+  echo -n "  ${DIM}Exporting GitLab snapshot...${RESET}"
+
+  if ! mkdir -p "$snapshot_dir"; then
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Could not create snapshot directory."
+    echo ""
+    return 1
+  fi
+
+  issues_json=$(fetch_all_issues)
+  milestones_json=$(fetch_all_milestones "")
+  labels_json=$(fetch_all_labels)
+
+  if ! printf '%s\n' "$issues_json" > "$snapshot_dir/issues.json" \
+    || ! printf '%s\n' "$milestones_json" > "$snapshot_dir/milestones.json" \
+    || ! printf '%s\n' "$labels_json" > "$snapshot_dir/labels.json" \
+    || ! jq -n \
+      --arg created_at "$created_at" \
+      --arg repo_name "$repo_name" \
+      --arg project_id "$project_id" \
+      --arg label "$label" \
+      '{created_at:$created_at, repo_name:$repo_name, project_id:$project_id, label:$label}' \
+      > "$snapshot_dir/metadata.json"; then
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Failed to write snapshot files."
+    echo ""
+    return 1
+  fi
+
+  printf "\r                                      \r"
+  echo "  ${GREEN}${ICON_OK}${RESET} Snapshot exported to ${DIM}${snapshot_dir}${RESET}"
+  echo ""
+  return 0
+}
+
 # ─── Sync epics from Jira → GitLab milestones ───
 sync_epics() {
   echo ""
@@ -752,6 +801,10 @@ sync_epics() {
 
 # ─── Sync stories from Jira → GitLab issues ───
 sync_stories() {
+  local sync_mode="${1:-apply}"
+  local dry_run=false
+  [[ "$sync_mode" == "dry-run" ]] && dry_run=true
+
   echo ""
   echo "  ${MAGENTA}${ICON_SYNC}${RESET} ${BOLD}Sync Stories from Jira${RESET}"
   echo ""
@@ -849,6 +902,78 @@ sync_stories() {
     fi
   done
 
+  local -a update_preview_lines=()
+  local -a field_changes=()
+  local preview_updated=0 preview_uptodate=0
+  local gl_issue gl_iid gl_title gl_description gl_labels_csv gl_milestone
+  local new_title new_description jira_labels merged_labels new_milestone change_summary
+  if [[ "$synced_count" -gt 0 ]]; then
+    while IFS= read -r story; do
+      s_key=$(jq -r '.key' <<< "$story")
+      s_summary=$(jq -r '.fields.summary' <<< "$story")
+      s_desc=$(jq -r '.fields.description // ""' <<< "$story")
+      s_priority=$(jq -r '.fields.priority.name // ""' <<< "$story")
+      s_labels_json=$(jq '.fields.labels // []' <<< "$story")
+      s_epic_key=$(jq -r '.fields.customfield_10000 // ""' <<< "$story")
+      s_subtasks_json=$(jq '.fields.subtasks // []' <<< "$story")
+
+      gl_issue=$(jq -c --arg k "$s_key" '.[] | select(.title | test("^\\[" + $k + "\\](\\s|$)"))' <<< "$gl_issues_json" | head -1)
+      [[ -z "$gl_issue" ]] && continue
+      gl_iid=$(jq -r '.iid' <<< "$gl_issue")
+      gl_title=$(jq -r '.title' <<< "$gl_issue")
+      gl_description=$(jq -r '.description // ""' <<< "$gl_issue")
+      gl_labels_csv=$(jq -r '[.labels[]?] | join(",")' <<< "$gl_issue")
+      gl_milestone=$(jq -r '.milestone.title // ""' <<< "$gl_issue")
+
+      new_title="[${s_key}] ${s_summary}"
+      new_description=$(jira_to_markdown "$s_desc")
+      st_count=$(jq 'length' <<< "$s_subtasks_json")
+      if [[ "$st_count" -gt 0 ]]; then
+        new_description="${new_description}"$'\n\n'"## Subtasks"
+        while IFS= read -r st; do
+          st_key=$(jq -r '.key' <<< "$st")
+          st_summary=$(jq -r '.fields.summary' <<< "$st")
+          new_description="${new_description}"$'\n'"- [ ] ${st_key}: ${st_summary}"
+        done < <(jq -c '.[]' <<< "$s_subtasks_json")
+      fi
+
+      jira_labels=$(jq -r '.[]' <<< "$s_labels_json")
+      [[ -n "$s_priority" ]] && jira_labels="${jira_labels:+$jira_labels
+}prio::${s_priority}"
+      merged_labels="$gl_labels_csv"
+      while IFS= read -r jl; do
+        [[ -z "$jl" ]] && continue
+        if ! tr ',' '\n' <<< "$merged_labels" | grep -qxF "$jl"; then
+          merged_labels="${merged_labels:+$merged_labels,}${jl}"
+        fi
+      done <<< "$jira_labels"
+      if [[ -n "$s_priority" ]]; then
+        merged_labels=$(echo "$merged_labels" | tr ',' '\n' | grep -v '^prio::' | tr '\n' ',' | sed 's/,$//')
+        merged_labels="${merged_labels:+$merged_labels,}prio::${s_priority}"
+      fi
+
+      new_milestone=""
+      if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
+        new_milestone="${epic_titles[$s_epic_key]:-}"
+      fi
+
+      field_changes=()
+      [[ "$new_title" != "$gl_title" ]] && field_changes+=("title")
+      [[ "$new_description" != "$gl_description" ]] && field_changes+=("description")
+      [[ "$merged_labels" != "$gl_labels_csv" ]] && field_changes+=("labels")
+      [[ "$new_milestone" != "$gl_milestone" ]] && field_changes+=("milestone")
+
+      if [[ ${#field_changes[@]} -eq 0 ]]; then
+        ((preview_uptodate++))
+        continue
+      fi
+
+      change_summary="${(j:, :)field_changes}"
+      update_preview_lines+=("    [${s_key}] ${s_summary} ${DIM}(${change_summary})${RESET}")
+      ((preview_updated++))
+    done < <(jq -c '.[]' <<< "$synced_json")
+  fi
+
   # Dry-run preview
   echo ""
   hr
@@ -876,12 +1001,38 @@ sync_stories() {
       echo "    [${skey}] ${stitle}"
     done < <(jq -c '.[]' <<< "$unsynced_json")
   fi
-  if [[ $synced_count -gt 0 ]]; then
-    echo "  ${ICON_SYNC} ${synced_count} issues to check for updates"
+  if [[ $preview_updated -gt 0 ]]; then
+    echo "  ${ICON_SYNC} ${preview_updated} issue updates planned:"
+    for line in "${update_preview_lines[@]}"; do
+      echo "$line"
+    done
+  elif [[ $synced_count -gt 0 ]]; then
+    echo "  ${DIM}No issue updates required.${RESET}"
+  fi
+  if [[ $preview_uptodate -gt 0 ]]; then
+    echo "  ${DIM}${preview_uptodate} synced issues already up-to-date${RESET}"
   fi
   echo ""
   hr
   echo ""
+
+  if $dry_run; then
+    echo "  ${GREEN}${ICON_OK}${RESET} ${BOLD}Dry-run complete${RESET}"
+    echo ""
+    local preview_issue_parts="${GREEN}${unsynced_count} to create${RESET}"
+    [[ $preview_updated -gt 0 ]] && preview_issue_parts="${preview_issue_parts}, ${YELLOW}${preview_updated} to update${RESET}"
+    [[ $preview_uptodate -gt 0 ]] && preview_issue_parts="${preview_issue_parts}, ${DIM}${preview_uptodate} up-to-date${RESET}"
+    echo "  ${ICON_TITLE} Issues:     ${preview_issue_parts}"
+    local preview_ms_parts=""
+    [[ ${#new_ms_keys[@]} -gt 0 ]] && preview_ms_parts="${#new_ms_keys[@]} to create"
+    [[ ${#update_ms_keys[@]} -gt 0 ]] && preview_ms_parts="${preview_ms_parts:+$preview_ms_parts, }${#update_ms_keys[@]} to update"
+    if [[ -n "$preview_ms_parts" ]]; then
+      echo "  ${ICON_MILE} Milestones: ${YELLOW}${preview_ms_parts}${RESET}"
+    fi
+    echo "  ${DIM}No GitLab changes were applied.${RESET}"
+    echo ""
+    return 0
+  fi
 
   echo -n "  ${BOLD}Proceed?${RESET} ${DIM}(y/n)${RESET} "
   read -r confirm
@@ -889,6 +1040,18 @@ sync_stories() {
     echo ""
     echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
     return 0
+  fi
+
+  echo ""
+  echo -n "  ${BOLD}Create local snapshot first?${RESET} ${DIM}(y/n)${RESET} "
+  read -r snapshot_confirm
+  if [[ "$snapshot_confirm" == "y" ]]; then
+    echo ""
+    if ! export_gitlab_snapshot "pre-sync-stories"; then
+      echo "  ${RED}${ICON_WARN}${RESET} Sync aborted because snapshot export failed."
+      echo ""
+      return 1
+    fi
   fi
 
   echo ""
@@ -1144,10 +1307,12 @@ sync_stories() {
 # ═══════════════════════════════════════════
 
 menu_options="${ICON_NEW} Create issue
-${ICON_TITLE} Work on existing issue"
+${ICON_TITLE} Work on existing issue
+${ICON_TITLE} Export GitLab snapshot"
 if $JIRA_AVAILABLE; then
   menu_options="${menu_options}
 ${ICON_SYNC} Sync epics from Jira
+${ICON_SYNC} Preview story sync from Jira
 ${ICON_SYNC} Sync stories from Jira"
 fi
 if $DEV_MODE; then
@@ -2402,12 +2567,28 @@ elif [[ "$action" == *"Sync epics"* ]]; then
   exit 0
 
 # ═══════════════════════════════════════════════════════════════
+# PATH: PREVIEW STORY SYNC FROM JIRA
+# ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Preview story sync"* ]]; then
+  sync_stories "dry-run"
+  exit 0
+
+# ═══════════════════════════════════════════════════════════════
 # PATH: SYNC STORIES FROM JIRA
 # ═══════════════════════════════════════════════════════════════
 
 elif [[ "$action" == *"Sync stories"* ]]; then
   sync_stories
   exit 0
+
+# ═══════════════════════════════════════════════════════════════
+# PATH: EXPORT GITLAB SNAPSHOT
+# ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Export GitLab snapshot"* ]]; then
+  export_gitlab_snapshot "manual"
+  exit $?
 
 # ═══════════════════════════════════════════════════════════════
 # PATH: RESET (test mode only)
