@@ -18,7 +18,7 @@ work_on_existing_issue() {
     echo ""
     echo "  ${DIM}No open issues found.${RESET}"
     echo ""
-    exec "$0" ${DEV_MODE:+"--dev"}
+    exec "$0" "${SCRIPT_FLAGS[@]}"
   fi
 
   if [[ "$issue_count" -ge 100 ]]; then

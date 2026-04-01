@@ -30,21 +30,42 @@ unsetopt xtrace verbose
 setopt typesetsilent
 SCRIPT_DIR="${0:P:h}"
 
-# ─── Help flag ───
+# ─── CLI flags ───
 DEV_MODE=false
-if [[ "$1" == "--dev" || "$1" == "-d" ]]; then
-  DEV_MODE=true
-  shift
-fi
+DRY_RUN_MODE=false
+SCRIPT_FLAGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dev|-d)
+      DEV_MODE=true
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN_MODE=true
+      shift
+      ;;
+    --help|-h)
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+$DEV_MODE && SCRIPT_FLAGS+=(--dev)
+$DRY_RUN_MODE && SCRIPT_FLAGS+=(--dry-run)
 
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo ""
   echo "  glab-helper — Interactive GitLab workflow helper"
   echo ""
-  echo "  Usage: glab-helper [--dev]"
+  echo "  Usage: glab-helper [--dev] [--dry-run]"
   echo ""
   echo "  Options:"
   echo "    --dev, -d   Enable developer mode (advanced commands, skip Jira project check)"
+  echo "    --dry-run   Show explicit preview-only sync actions in developer mode"
   echo ""
   echo "  Run from any cloned GitLab repo. Requires: glab, fzf, jq"
   echo "  Authenticate first: glab auth login"
@@ -182,10 +203,16 @@ echo ""
 
 menu_options="${ICON_NEW} Create issue
 ${ICON_TITLE} Work on existing issue"
+menu_options="${menu_options}
+${ICON_TITLE} Export GitLab snapshot"
 if $JIRA_AVAILABLE; then
   menu_options="${menu_options}
 ${ICON_SYNC} Sync epics from Jira
 ${ICON_SYNC} Sync stories from Jira"
+fi
+if $JIRA_AVAILABLE && $DEV_MODE && $DRY_RUN_MODE; then
+  menu_options="${menu_options}
+${ICON_SYNC} Preview story sync from Jira"
 fi
 if $DEV_MODE; then
   menu_options="${menu_options}
@@ -222,6 +249,14 @@ elif [[ "$action" == *"Create"* ]]; then
   create_issue
 
 # ═══════════════════════════════════════════════════════════════
+# PATH: EXPORT GITLAB SNAPSHOT
+# ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Export GitLab snapshot"* ]]; then
+  export_gitlab_snapshot "manual"
+  exit 0
+
+# ═══════════════════════════════════════════════════════════════
 # PATH: SYNC EPICS FROM JIRA
 # ═══════════════════════════════════════════════════════════════
 
@@ -235,6 +270,14 @@ elif [[ "$action" == *"Sync epics"* ]]; then
 
 elif [[ "$action" == *"Sync stories"* ]]; then
   sync_stories
+  exit 0
+
+# ═══════════════════════════════════════════════════════════════
+# PATH: PREVIEW STORY SYNC FROM JIRA
+# ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Preview story sync"* ]]; then
+  sync_stories dry-run
   exit 0
 
 # ═══════════════════════════════════════════════════════════════
