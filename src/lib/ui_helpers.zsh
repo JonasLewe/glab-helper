@@ -57,6 +57,9 @@ offer_branch_creation() {
     echo -n "  ${BOLD}Check out existing branch?${RESET} ${DIM}(y/n)${RESET} "
     read -r do_checkout
     if [[ "$do_checkout" == "y" ]]; then
+      if ! require_writes_allowed "check out Git branch"; then
+        return 1
+      fi
       checkout_err=$(git checkout "$branch_name" 2>&1)
       checkout_rc=$?
       if [[ $checkout_rc -eq 0 ]]; then
@@ -70,8 +73,14 @@ offer_branch_creation() {
     return
   fi
 
+  if ! require_writes_allowed "fetch Git branches"; then
+    return 1
+  fi
   git fetch origin --quiet 2>/dev/null
-  default_branch=$(get_default_branch)
+  if ! default_branch=$(get_default_branch); then
+    echo "  ${RED}${ICON_WARN}${RESET} Could not determine the default branch."
+    return 1
+  fi
 
   branch_list=$(git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/remotes/origin/ \
     | sed 's|^origin/||' \
@@ -126,6 +135,9 @@ ${branch_list}"
     fi
   fi
 
+  if ! require_writes_allowed "create Git branch"; then
+    return 1
+  fi
   branch_err=$(git branch "$branch_name" "$start_point" 2>&1)
   branch_rc=$?
   if [[ $branch_rc -eq 0 ]]; then
@@ -137,6 +149,9 @@ ${branch_list}"
     read -r do_checkout
 
     if [[ "$do_checkout" == "y" ]]; then
+      if ! require_writes_allowed "check out Git branch"; then
+        return 1
+      fi
       checkout_err=$(git checkout "$branch_name" 2>&1)
       checkout_rc=$?
       if [[ $checkout_rc -eq 0 ]]; then

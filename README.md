@@ -61,11 +61,19 @@ This should show your GitLab instance and username. The token is stored locally 
 Run from any cloned GitLab repo:
 
 ```bash
-glab-helper [--dev] [--dry-run]
+glab-helper [--dev] [--dry-run] [--version]
 ```
 
-The `--dev` flag enables developer mode — advanced commands and skips the Jira target project check, allowing you to use Jira sync features against any repo.
-The `--dry-run` flag exposes the explicit preview-only story sync action, intended for use together with `--dev`.
+The `--dev` flag skips the Jira target-project check. It does not enable
+destructive maintenance commands.
+
+The `--dry-run` flag makes the complete process read-only. Its menu contains
+only Jira epic and story previews; it never performs GitLab mutations, creates
+or checks out Git branches, or writes snapshots. It can be combined with
+`--dev`, but does not require it.
+
+`--help` and `--version` work offline. Unknown arguments are rejected instead
+of opening the normal menu.
 
 You'll be presented with the following options (Jira options only appear when integration is configured):
 
@@ -98,6 +106,23 @@ Bulk-imports all Jira Epics (filtered by board labels) as GitLab Milestones. Epi
 ### Sync stories from Jira
 
 Bulk-imports all unsynced Jira User Stories as GitLab Issues. Each issue gets the converted description, labels, priority label, subtasks as checkboxes, and milestone (from Epic). No assignee is set and no editor review — fully automatic. Missing milestones and labels are created on the fly, existing milestones are updated with epic descriptions. Shows a dry-run preview with confirmation.
+
+## Sync safety
+
+- GitLab and Jira list reads validate their JSON schema and abort on request,
+  pagination, or schema errors. Partial result sets are never treated as empty
+  successful responses.
+- Jira pagination advances by the number of issues actually returned, so
+  server-side page limits do not skip results.
+- Story sync aborts if epic data is incomplete, preserving all existing
+  milestone assignments.
+- Labels and milestones are only created after the final confirmation. If a
+  required dependency fails or cannot be verified, its issue is not created.
+- POST requests are not blindly retried after an ambiguous failure. Safe reads
+  and idempotent updates use bounded exponential backoff.
+- Partial failures and failed snapshot exports return a non-zero exit status.
+- Project reset is not available in the product TUI, including in `--dev`
+  mode.
 
 ### Branch creation
 
@@ -156,6 +181,10 @@ Run the local smoke and syntax checks with:
 ```bash
 ./tests/run.sh
 ```
+
+The suite includes API contract and failure-path checks for pagination,
+read failures, dry-run writes, confirmation ordering, and partial-failure exit
+codes. ShellCheck is run automatically when installed.
 
 ## License
 

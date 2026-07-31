@@ -60,18 +60,12 @@ ${ICON_NEW} Manual"
 
     # Fetch existing GitLab issues (paginated) to find already-synced stories
     echo -n "  ${DIM}Checking synced issues...${RESET}"
-    gl_page=1
-    gl_per_page=100
-    gl_page_json=""
-    gl_page_count=0
-    gl_issues_json="[]"
-    while true; do
-      gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=opened&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
-      gl_page_count=$(jq 'length' <<< "$gl_page_json")
-      gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
-      [[ "$gl_page_count" -lt "$gl_per_page" ]] && break
-      ((gl_page++))
-    done
+    if ! gl_issues_json=$(fetch_all_issues "opened"); then
+      printf "\r                                      \r"
+      echo "  ${RED}${ICON_WARN}${RESET} Issue creation aborted because GitLab issues could not be read completely."
+      echo ""
+      exit 1
+    fi
     synced_keys=$(jq -r '.[] | .title' <<< "$gl_issues_json" | grep -oE '\[[A-Z]+-[0-9]+\]' | tr -d '[]')
     printf "\r                                      \r"
 
@@ -202,16 +196,21 @@ ${ICON_NEW} Manual"
     echo "  ${DIM}From Jira:${RESET} ${labels_csv}"
     echo ""
 
-    # Ensure Jira labels exist in GitLab
-    echo -n "  ${DIM}Syncing labels...${RESET}"
-    labels_json=$(fetch_all_labels)
-    existing_labels=$(jq -r '.[].name' <<< "$labels_json" 2>/dev/null || echo "")
+    # Plan missing Jira labels. They are created only after final confirmation.
+    echo -n "  ${DIM}Checking labels...${RESET}"
+    if ! labels_json=$(fetch_all_labels); then
+      printf "\r                                      \r"
+      echo "  ${RED}${ICON_WARN}${RESET} Issue creation aborted because GitLab labels could not be read completely."
+      echo ""
+      exit 1
+    fi
+    existing_labels=$(jq -r '.[].name' <<< "$labels_json")
+    missing_labels=()
     IFS=',' read -rA label_array <<< "$labels_csv"
     for lbl in "${label_array[@]}"; do
+      [[ -z "$lbl" ]] && continue
       if ! grep -qxF "$lbl" <<< "$existing_labels"; then
-        glab label create -n "$lbl" &>/dev/null && \
-          existing_labels="${existing_labels}
-${lbl}"
+        missing_labels+=("$lbl")
       fi
     done
     printf "\r                                      \r"
@@ -263,12 +262,12 @@ ${lbl}"
     echo ""
 
     assignee=""
-    members_json=$(fetch_all_members)
-    if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
-      members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
-    else
-      members=""
+    if ! members_json=$(fetch_all_members); then
+      echo "  ${RED}${ICON_WARN}${RESET} Issue creation aborted because GitLab members could not be read completely."
+      echo ""
+      exit 1
     fi
+    members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json")
 
     if [[ -n "$members" ]]; then
       member_options="  Skip (no assignee)
@@ -313,9 +312,15 @@ ${members}"
     echo ""
 
     milestone=""
+    milestone_action="none"
+    existing_ms_id=""
+    ms_desc_full=""
     if [[ -n "$jira_epic_key" && "$jira_epic_key" != "null" ]]; then
       echo -n "  ${DIM}Fetching epic from Jira...${RESET}"
-      if ! epic_response=$(curl -fsS \
+      if ! epic_response=$(retry_read_json \
+        "Jira epic ${jira_epic_key}" \
+        'type == "object" and (.fields | type == "object") and ((.fields.summary // "") | type == "string") and ((.fields.description // "") | type == "string")' \
+        curl -fsS --retry 2 --retry-all-errors --retry-delay 0 --retry-max-time 30 \
         -H "Authorization: Bearer ${JIRA_TOKEN}" \
         "${JIRA_URL}/rest/api/2/issue/${jira_epic_key}?fields=summary,description"); then
         printf "\r                                      \r"
@@ -329,7 +334,11 @@ ${members}"
         printf "\r                                      \r"
 
         if [[ -n "$epic_title" ]]; then
-          ms_json=$(fetch_all_milestones)
+          if ! ms_json=$(fetch_all_milestones); then
+            echo "  ${RED}${ICON_WARN}${RESET} Issue creation aborted because GitLab milestones could not be read completely."
+            echo ""
+            exit 1
+          fi
           # Match by Jira key in description first, then fall back to title
           existing_ms_id=$(jq -r --arg k "$jira_epic_key" '[.[] | select(.description // "" | contains("<!-- jira:" + $k + " -->"))][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
           if [[ -z "$existing_ms_id" ]]; then
@@ -337,12 +346,17 @@ ${members}"
           fi
 
           if [[ -z "$existing_ms_id" ]]; then
-            ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" -f "description=$ms_desc_full")
-            "${ms_cmd[@]}" &>/dev/null
-            echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} created from epic ${DIM}${jira_epic_key}${RESET}"
+            milestone_action="create"
+            echo "  ${DIM}Milestone ${BOLD}${epic_title}${RESET} will be created after confirmation.${RESET}"
           else
-            glab api "projects/$project_id/milestones/$existing_ms_id" -X PUT -f "title=$epic_title" -f "description=$ms_desc_full" &>/dev/null
-            echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(updated)${RESET}"
+            old_ms_title=$(jq -r --argjson id "$existing_ms_id" '.[] | select(.id == $id) | .title // ""' <<< "$ms_json")
+            old_ms_desc=$(jq -r --argjson id "$existing_ms_id" '.[] | select(.id == $id) | .description // ""' <<< "$ms_json")
+            if [[ "$(trim_whitespace "$old_ms_title")" != "$(trim_whitespace "$epic_title")" || "$old_ms_desc" != "$ms_desc_full" ]]; then
+              milestone_action="update"
+              echo "  ${DIM}Milestone ${BOLD}${epic_title}${RESET} will be updated after confirmation.${RESET}"
+            else
+              echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${epic_title}${RESET} ${DIM}(up-to-date)${RESET}"
+            fi
           fi
           milestone="$epic_title"
         fi
@@ -374,6 +388,56 @@ ${members}"
       exit 0
     fi
 
+    if ! require_writes_allowed "create issue from Jira"; then
+      exit 1
+    fi
+
+    # Apply dependencies only after confirmation: milestone, labels, then issue.
+    if [[ "$milestone_action" == "create" ]]; then
+      ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$epic_title" -f "description=$ms_desc_full")
+      if ! require_writes_allowed "create GitLab milestone" || ! "${ms_cmd[@]}" &>/dev/null; then
+        echo "  ${RED}${ICON_WARN}${RESET} Required milestone could not be created; issue was not created."
+        exit 1
+      fi
+    elif [[ "$milestone_action" == "update" ]]; then
+      ms_cmd=(glab api "projects/$project_id/milestones/$existing_ms_id" -X PUT -f "title=$epic_title" -f "description=$ms_desc_full")
+      if ! require_writes_allowed "update GitLab milestone" || ! retry_idempotent "${ms_cmd[@]}" &>/dev/null; then
+        echo "  ${RED}${ICON_WARN}${RESET} Required milestone could not be updated; issue was not created."
+        exit 1
+      fi
+    fi
+
+    if [[ "$milestone_action" != "none" ]]; then
+      if ! ms_json=$(fetch_all_milestones) \
+        || ! jq -e --arg key "$jira_epic_key" --arg title "$epic_title" \
+          'any(.[]; .title == $title and ((.description // "") | contains("<!-- jira:" + $key + " -->")))' \
+          <<< "$ms_json" &>/dev/null; then
+        echo "  ${RED}${ICON_WARN}${RESET} Required milestone could not be verified; issue was not created."
+        exit 1
+      fi
+    fi
+
+    for lbl in "${missing_labels[@]}"; do
+      [[ -z "$lbl" ]] && continue
+      if ! require_writes_allowed "create GitLab label" || ! glab label create -n "$lbl" &>/dev/null; then
+        echo "  ${RED}${ICON_WARN}${RESET} Required label '${lbl}' could not be created; issue was not created."
+        exit 1
+      fi
+    done
+    if [[ ${#missing_labels[@]} -gt 0 ]]; then
+      if ! labels_json=$(fetch_all_labels); then
+        echo "  ${RED}${ICON_WARN}${RESET} Required labels could not be verified; issue was not created."
+        exit 1
+      fi
+      existing_labels=$(jq -r '.[].name' <<< "$labels_json")
+      for lbl in "${label_array[@]}"; do
+        if ! grep -qxF "$lbl" <<< "$existing_labels"; then
+          echo "  ${RED}${ICON_WARN}${RESET} Required label '${lbl}' is unavailable; issue was not created."
+          exit 1
+        fi
+      done
+    fi
+
     # ─── Create the issue ───
     cmd=(glab issue create -t "$title" -d "$description")
     if [[ -n "$labels_csv" ]]; then
@@ -388,8 +452,13 @@ ${members}"
 
     echo ""
     echo -n "  ${DIM}Creating issue...${RESET}"
-    output=$("${cmd[@]}" 2>&1)
-    create_status=$?
+    if require_writes_allowed "create GitLab issue"; then
+      output=$("${cmd[@]}" 2>&1)
+      create_status=$?
+    else
+      output="write blocked"
+      create_status=1
+    fi
     printf "\r                       \r"
 
     if [[ $create_status -eq 0 ]]; then
@@ -422,26 +491,27 @@ ${members}"
   echo -n "  ${DIM}Fetching project data...${RESET}"
 
   # ─── Fetch labels ───
-  labels_json=$(glab label list -P 100 --output json 2>/dev/null || echo "[]")
-  all_labels=$(jq -r 'if type == "array" then sort_by(.name) | .[].name else empty end' <<< "$labels_json" 2>/dev/null)
+  if ! labels_json=$(fetch_all_labels); then
+    echo "  ${RED}${ICON_WARN}${RESET} Manual issue creation aborted because GitLab labels could not be read completely."
+    exit 1
+  fi
+  all_labels=$(jq -r 'sort_by(.name) | .[].name' <<< "$labels_json")
   label_count=$(awk 'NF{c++} END{print c+0}' <<< "$all_labels")
 
   # ─── Fetch members ───
-  members_json=$(glab api "projects/$project_id/members/all?per_page=100" 2>/dev/null) || members_json="[]"
-  if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
-    members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
-  else
-    members=""
+  if ! members_json=$(fetch_all_members); then
+    echo "  ${RED}${ICON_WARN}${RESET} Manual issue creation aborted because GitLab members could not be read completely."
+    exit 1
   fi
+  members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json")
   member_count=$(awk 'NF{c++} END{print c+0}' <<< "$members")
 
   # ─── Fetch milestones ───
-  ms_json=$(fetch_all_milestones)
-  if jq -e 'type == "array"' <<< "$ms_json" &>/dev/null; then
-    milestones=$(jq -r '.[].title // empty' <<< "$ms_json" 2>/dev/null)
-  else
-    milestones=""
+  if ! ms_json=$(fetch_all_milestones); then
+    echo "  ${RED}${ICON_WARN}${RESET} Manual issue creation aborted because GitLab milestones could not be read completely."
+    exit 1
   fi
+  milestones=$(jq -r '.[].title // empty' <<< "$ms_json")
   ms_count=$(awk 'NF{c++} END{print c+0}' <<< "$milestones")
 
   printf "\r                                    \r"
@@ -479,6 +549,8 @@ ${members}"
   fi
 
   labels_csv=""
+  planned_label_names=()
+  planned_label_colors=()
   label_loop=true
   while $label_loop; do
     label_options="  Skip (no labels)
@@ -513,16 +585,10 @@ ${all_labels}"
       if [[ -n "$new_label_name" ]]; then
         echo -n "  ${ICON_NEW} Color hex (e.g. ${DIM}#E44D2E${RESET}, empty=default): "
         read -r new_label_color
-        create_cmd=(glab label create -n "$new_label_name")
-        if [[ -n "$new_label_color" ]]; then
-          create_cmd+=(-c "$new_label_color")
-        fi
-        if "${create_cmd[@]}" &>/dev/null; then
-          echo "  ${GREEN}${ICON_OK}${RESET} Label ${BOLD}${new_label_name}${RESET} created"
-          all_labels=$(printf "%s\n%s" "$all_labels" "$new_label_name" | sort | grep -v '^$')
-        else
-          echo "  ${RED}${ICON_WARN}${RESET} Failed to create label"
-        fi
+        planned_label_names+=("$new_label_name")
+        planned_label_colors+=("$new_label_color")
+        echo "  ${DIM}Label ${BOLD}${new_label_name}${RESET} will be created after confirmation.${RESET}"
+        all_labels=$(printf "%s\n%s" "$all_labels" "$new_label_name" | sort | grep -v '^$')
         echo ""
         echo "  ${DIM}Reopening label selector...${RESET}"
         echo ""
@@ -609,6 +675,8 @@ ${members}"
   echo ""
 
   milestone=""
+  planned_ms_title=""
+  planned_ms_due=""
   ms_options="  Skip (no milestone)
 ${ICON_NEW} Create new milestone..."
   if [[ -n "$milestones" ]]; then
@@ -640,16 +708,10 @@ ${milestones}"
     if [[ -n "$ms_title" ]]; then
       echo -n "  ${ICON_NEW} Due date (${DIM}YYYY-MM-DD${RESET}, empty=none): "
       read -r ms_due
-      ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
-      if [[ -n "$ms_due" ]]; then
-        ms_cmd+=(-f "due_date=$ms_due")
-      fi
-      if "${ms_cmd[@]}" &>/dev/null; then
-        echo "  ${GREEN}${ICON_OK}${RESET} Milestone ${BOLD}${ms_title}${RESET} created"
-        milestone="$ms_title"
-      else
-        echo "  ${RED}${ICON_WARN}${RESET} Failed to create milestone"
-      fi
+      planned_ms_title="$ms_title"
+      planned_ms_due="$ms_due"
+      milestone="$ms_title"
+      echo "  ${DIM}Milestone ${BOLD}${ms_title}${RESET} will be created after confirmation.${RESET}"
     fi
   elif grep -q "Skip" <<< "$selected_ms"; then
     milestone=""
@@ -816,6 +878,54 @@ ${milestones}"
     exit 0
   fi
 
+  if ! require_writes_allowed "create manual GitLab issue"; then
+    exit 1
+  fi
+
+  if [[ -n "$planned_ms_title" ]]; then
+    ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$planned_ms_title")
+    [[ -n "$planned_ms_due" ]] && ms_cmd+=(-f "due_date=$planned_ms_due")
+    if ! require_writes_allowed "create GitLab milestone" || ! "${ms_cmd[@]}" &>/dev/null; then
+      echo "  ${RED}${ICON_WARN}${RESET} Required milestone could not be created; issue was not created."
+      exit 1
+    fi
+    if ! ms_json=$(fetch_all_milestones) \
+      || ! jq -e --arg title "$planned_ms_title" 'any(.[]; .title == $title)' \
+        <<< "$ms_json" &>/dev/null; then
+      echo "  ${RED}${ICON_WARN}${RESET} Required milestone could not be verified; issue was not created."
+      exit 1
+    fi
+  fi
+
+  created_planned_labels=false
+  for (( i=1; i<=${#planned_label_names[@]}; i++ )); do
+    new_label_name="${planned_label_names[$i]}"
+    if ! grep -qxF "$new_label_name" <<< "$(csv_to_lines "$labels_csv")"; then
+      continue
+    fi
+    create_cmd=(glab label create -n "$new_label_name")
+    [[ -n "${planned_label_colors[$i]}" ]] && create_cmd+=(-c "${planned_label_colors[$i]}")
+    if ! require_writes_allowed "create GitLab label" || ! "${create_cmd[@]}" &>/dev/null; then
+      echo "  ${RED}${ICON_WARN}${RESET} Required label '${new_label_name}' could not be created; issue was not created."
+      exit 1
+    fi
+    created_planned_labels=true
+  done
+  if $created_planned_labels; then
+    if ! labels_json=$(fetch_all_labels); then
+      echo "  ${RED}${ICON_WARN}${RESET} Required labels could not be verified; issue was not created."
+      exit 1
+    fi
+    existing_labels=$(jq -r '.[].name' <<< "$labels_json")
+    while IFS= read -r lbl; do
+      [[ -z "$lbl" ]] && continue
+      if ! grep -qxF "$lbl" <<< "$existing_labels"; then
+        echo "  ${RED}${ICON_WARN}${RESET} Required label '${lbl}' is unavailable; issue was not created."
+        exit 1
+      fi
+    done < <(csv_to_lines "$labels_csv")
+  fi
+
   # ─── Build & execute command ───
   cmd=(glab issue create -t "$title")
 
@@ -835,8 +945,13 @@ ${milestones}"
 
   echo ""
   echo -n "  ${DIM}Creating issue...${RESET}"
-  output=$("${cmd[@]}" 2>&1)
-  create_status=$?
+  if require_writes_allowed "create GitLab issue"; then
+    output=$("${cmd[@]}" 2>&1)
+    create_status=$?
+  else
+    output="write blocked"
+    create_status=1
+  fi
   printf "\r                       \r"
 
   if [[ $create_status -eq 0 ]]; then

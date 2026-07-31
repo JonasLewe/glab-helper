@@ -3,6 +3,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export GLAB_HELPER_RETRY_BASE_DELAY=0
+export GLAB_HELPER_PAGINATION_MODE=manual
+TEST_TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TEST_TMP_ROOT"' EXIT
 
 pass() {
   printf 'PASS %s\n' "$1"
@@ -20,12 +24,12 @@ run_check() {
   local name="$1"
   shift
 
-  if "$@" >/tmp/glab-helper-test.out 2>&1; then
+  if "$@" >"$TEST_TMP_ROOT/check.out" 2>&1; then
     pass "$name"
     return 0
   fi
 
-  fail "$name" "$(cat /tmp/glab-helper-test.out)"
+  fail "$name" "$(cat "$TEST_TMP_ROOT/check.out")"
 }
 
 run_help_check() {
@@ -37,7 +41,7 @@ run_help_check() {
     fail "$name" "$output"
   fi
 
-  if [[ "$output" != *"Usage: glab-helper [--dev] [--dry-run]"* ]]; then
+  if [[ "$output" != *"Usage: glab-helper [--dev] [--dry-run] [--version]"* ]]; then
     fail "$name" "$output"
   fi
 
@@ -149,8 +153,8 @@ EOF
   pass "$name"
 }
 
-run_preview_menu_visible_with_dry_run_smoke() {
-  local name="preview-menu-visible-with-dry-run-smoke"
+run_dry_run_menu_read_only_smoke() {
+  local name="dry-run-menu-read-only-smoke"
   local tmpdir stubdir menu_capture output
 
   tmpdir="$(mktemp -d)"
@@ -210,7 +214,13 @@ EOF
     fail "$name" "$output"
   fi
 
-  if [[ ! -f "$menu_capture" || "$(cat "$menu_capture")" != *"Preview story sync from Jira"* || "$(cat "$menu_capture")" != *"Sync stories from Jira"* ]]; then
+  if [[ ! -f "$menu_capture" \
+    || "$(cat "$menu_capture")" != *"Preview story sync from Jira"* \
+    || "$(cat "$menu_capture")" != *"Preview epic sync from Jira"* \
+    || "$(cat "$menu_capture")" == *$'\n'"${ICON_SYNC:-~} Sync stories from Jira"* \
+    || "$(cat "$menu_capture")" == *"Create issue"* \
+    || "$(cat "$menu_capture")" == *"Work on existing issue"* \
+    || "$(cat "$menu_capture")" == *"Reset:"* ]]; then
     fail "$name" "$output"
   fi
 
@@ -219,11 +229,12 @@ EOF
 
 run_jira_flow_smoke() {
   local name="jira-create-flow-smoke"
-  local tmpdir stubdir responses_file output
+  local tmpdir stubdir responses_file command_log output
 
   tmpdir="$(mktemp -d)"
   stubdir="$tmpdir/bin"
   responses_file="$tmpdir/fzf-responses"
+  command_log="$tmpdir/commands"
   mkdir -p "$stubdir"
 
   trap 'rm -rf "$tmpdir"' RETURN
@@ -297,6 +308,7 @@ case "$*" in
     exit 1
     ;;
 esac
+printf '%s\n' "$*" >>"${COMMAND_LOG:?}"
 EOF
 
   cat >"$stubdir/curl" <<'EOF'
@@ -322,6 +334,7 @@ EOF
   if ! output="$(
     PATH="$stubdir:$PATH" \
     TERM=xterm \
+    COMMAND_LOG="$command_log" \
     FZF_RESPONSES_FILE="$responses_file" \
     "$ROOT_DIR/src/glab-helper" <<< $'\nn\n' 2>&1
   )"; then
@@ -334,6 +347,9 @@ EOF
 
   if [[ "$output" != *"Summary"* || "$output" != *"Epic Alpha"* || "$output" != *"Aborted."* ]]; then
     fail "$name" "$output"
+  fi
+  if rg -q -- '(^| )(issue create|label create|api .* -X (POST|PUT|PATCH|DELETE))' "$command_log"; then
+    fail "$name" "A mutation ran before final confirmation: $(cat "$command_log")"
   fi
 
   pass "$name"
@@ -416,7 +432,7 @@ EOF
     PATH="$stubdir:$PATH" \
     TERM=xterm \
     FZF_RESPONSES_FILE="$responses_file" \
-    "$ROOT_DIR/src/glab-helper" --dev --dry-run 2>&1
+    "$ROOT_DIR/src/glab-helper" --dev 2>&1
   )"; then
     fail "$name" "$output"
   fi
@@ -814,7 +830,7 @@ case "$*" in
     printf '%s\n' '[{"name":"team-a"},{"name":"prio::high"}]'
     ;;
   "api projects/1/milestones?state=active&per_page=100&page=1")
-    printf '%s\n' '[{"id":55,"title":"Tests in der CI/CD Pipeline","description":"<!-- jira:EPIC-OLD -->"},{"id":56,"title":"Code Quality und Security Checks","description":"## Scope"$'\''\n\n'\''"<!-- jira:EPIC-NEW -->"}]'
+    printf '%s\n' '[{"id":55,"title":"Tests in der CI/CD Pipeline","description":"<!-- jira:EPIC-OLD -->"},{"id":56,"title":"Code Quality und Security Checks","description":"## Scope\n\n<!-- jira:EPIC-NEW -->"}]'
     ;;
   *)
     printf 'unexpected glab invocation: %s\n' "$*" >&2
@@ -919,7 +935,7 @@ case "$*" in
     printf '%s\n' '[{"name":"team-a"},{"name":"prio::high"}]'
     ;;
   "api projects/1/milestones?state=active&per_page=100&page=1")
-    printf '%s\n' '[{"id":55,"title":"Existing Epic","description":"## Scope"$'\''\n\n'\''"<!-- jira:EPIC-2 -->"}]'
+    printf '%s\n' '[{"id":55,"title":"Existing Epic","description":"## Scope\n\n<!-- jira:EPIC-2 -->"}]'
     ;;
   *)
     printf 'unexpected glab invocation: %s\n' "$*" >&2
@@ -2010,10 +2026,10 @@ case "$*" in
   api\ projects/ibm%2Fglab-helper/variables/*)
     exit 1
     ;;
-  "label list -P 100 --output json")
+  "api projects/1/labels?per_page=100&page=1")
     printf '%s\n' '[]'
     ;;
-  "api projects/1/members/all?per_page=100")
+  "api projects/1/members/all?per_page=100&page=1")
     printf '%s\n' '[]'
     ;;
   "api projects/1/milestones?state=active&per_page=100&page=1")
@@ -2114,7 +2130,7 @@ case "$*" in
   api\ projects/ibm%2Fglab-helper/variables/*)
     exit 1
     ;;
-  "issue list --output json -P 100")
+  "api projects/1/issues?state=opened&per_page=100&page=1")
     printf '%s\n' '[{"iid":7,"title":"Existing issue","description":"Old description","labels":[],"assignees":[],"milestone":null}]'
     ;;
   "issue view 7 --output json")
@@ -2170,6 +2186,8 @@ EOF
   pass "$name"
 }
 
+source "$ROOT_DIR/tests/p0_safety.sh"
+
 run_check "zsh-syntax" zsh -n "$ROOT_DIR/src/glab-helper" "$ROOT_DIR"/src/lib/*.zsh "$ROOT_DIR"/src/flows/*.zsh
 run_check "bash-syntax" bash -n "$ROOT_DIR/install.sh"
 
@@ -2183,7 +2201,7 @@ run_help_check "help-smoke" "$ROOT_DIR/src/glab-helper" --help
 run_help_check "dev-help-smoke" "$ROOT_DIR/src/glab-helper" --dev --help
 run_help_check "dev-dry-run-help-smoke" "$ROOT_DIR/src/glab-helper" --dev --dry-run --help
 run_preview_menu_hidden_by_default_smoke
-run_preview_menu_visible_with_dry_run_smoke
+run_dry_run_menu_read_only_smoke
 run_jira_flow_smoke
 run_sync_epics_smoke
 run_snapshot_export_smoke
@@ -2202,5 +2220,14 @@ run_sync_stories_update_smoke
 run_sync_stories_update_title_only_smoke
 run_manual_create_with_branch_smoke
 run_work_issue_edit_description_smoke
+run_offline_cli_validation_smoke
+run_jira_pagination_contract_smoke
+run_gitlab_read_failure_smoke
+run_gitlab_http_status_smoke
+run_gitlab_native_pagination_smoke
+run_epic_failure_blocks_story_sync_smoke
+run_dry_run_write_barrier_smoke
+run_partial_failure_exit_code_smoke
+run_snapshot_read_failure_smoke
 
 printf 'All tests passed.\n'
