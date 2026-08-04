@@ -1,13 +1,22 @@
 work_on_existing_issue() {
+  if ! require_writes_allowed "work on GitLab issue"; then
+    return 1
+  fi
+
   echo ""
   echo -n "  ${DIM}Fetching issues and branches...${RESET}"
 
   # Fetch open issues
-  issues_json=$(glab issue list --output json -P 100 2>/dev/null || echo "[]")
-  issue_count=$(jq 'if type == "array" then length else 0 end' <<< "$issues_json")
+  if ! issues_json=$(fetch_all_issues "opened"); then
+    printf "\r                                        \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Could not read GitLab issues completely."
+    echo ""
+    return 1
+  fi
+  issue_count=$(jq 'length' <<< "$issues_json")
 
   # Fetch remote branches (also check local branches)
-  git fetch origin --quiet 2>/dev/null
+  require_writes_allowed "fetch Git branches" && git fetch origin --quiet 2>/dev/null
   remote_branches=$(git branch -r 2>/dev/null | grep -v 'HEAD' | sed 's|^ *origin/||' | sed 's|^ *||')
   local_branches=$(git branch 2>/dev/null | sed 's|^[* ] ||')
   all_branches=$(printf '%s\n%s' "$remote_branches" "$local_branches" | sort -u)
@@ -18,11 +27,7 @@ work_on_existing_issue() {
     echo ""
     echo "  ${DIM}No open issues found.${RESET}"
     echo ""
-    exec "$0" "${SCRIPT_FLAGS[@]}"
-  fi
-
-  if [[ "$issue_count" -ge 100 ]]; then
-    echo "  ${YELLOW}${ICON_WARN}${RESET} ${DIM}Showing first 100 issues (there may be more)${RESET}"
+    return 0
   fi
 
   # Build fzf list: check each issue for existing branch
@@ -121,6 +126,9 @@ ${ICON_WARN} Close issue"
         read -r do_checkout
 
         if [[ "$do_checkout" == "y" ]]; then
+          if ! require_writes_allowed "check out Git branch"; then
+            return 1
+          fi
           checkout_err=$(git checkout "$existing_branch" 2>&1)
           checkout_rc=$?
           if [[ $checkout_rc -ne 0 ]]; then
@@ -144,7 +152,15 @@ ${ICON_WARN} Close issue"
     elif [[ "$work_action" == *"description"* ]]; then
       echo ""
       echo -n "  ${DIM}Fetching current description...${RESET}"
-      current_desc=$(glab issue view "$selected_iid" --output json 2>/dev/null | jq -r '.description // ""')
+      if ! current_issue=$(retry_read_json \
+        "GitLab issue #${selected_iid}" \
+        'type == "object" and ((.description // "") | type == "string")' \
+        glab issue view "$selected_iid" --output json); then
+        printf "\r                                        \r"
+        echo "  ${RED}${ICON_WARN}${RESET} Could not read the current issue description."
+        continue
+      fi
+      current_desc=$(jq -r '.description // ""' <<< "$current_issue")
       printf "\r                                        \r"
 
       tmpfile=$(mktemp "${TMPDIR:-/tmp}/gl-issue-XXXXXX")
@@ -162,7 +178,8 @@ ${ICON_WARN} Close issue"
           echo "  ${DIM}No changes made.${RESET}"
         else
           echo -n "  ${DIM}Updating description...${RESET}"
-          if glab issue update "$selected_iid" -d "$new_desc" &>/dev/null; then
+          if require_writes_allowed "update GitLab issue description" \
+            && glab issue update "$selected_iid" -d "$new_desc" &>/dev/null; then
             printf "\r                                \r"
             echo "  ${GREEN}${ICON_OK}${RESET} Description updated"
           else
@@ -177,8 +194,12 @@ ${ICON_WARN} Close issue"
       echo ""
       echo -n "  ${DIM}Fetching labels...${RESET}"
       current_labels=$(jq -r '.labels // [] | join(",")' <<< "$selected_issue_json")
-      labels_json=$(fetch_all_labels)
-      all_labels=$(jq -r 'sort_by(.name) | .[].name' <<< "$labels_json" 2>/dev/null || echo "")
+      if ! labels_json=$(fetch_all_labels); then
+        printf "\r                                \r"
+        echo "  ${RED}${ICON_WARN}${RESET} Could not read GitLab labels."
+        continue
+      fi
+      all_labels=$(jq -r 'sort_by(.name) | .[].name' <<< "$labels_json")
       printf "\r                                \r"
 
       if [[ -n "$current_labels" ]]; then
@@ -209,7 +230,8 @@ ${ICON_WARN} Close issue"
           fi
         done <<< "$selected_labels"
 
-        if glab issue update "$selected_iid" -l "$new_labels" &>/dev/null; then
+        if require_writes_allowed "update GitLab issue labels" \
+          && glab issue update "$selected_iid" -l "$new_labels" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Labels updated to ${DIM}${new_labels}${RESET}"
         else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to update labels"
@@ -223,12 +245,12 @@ ${ICON_WARN} Close issue"
       echo ""
       echo -n "  ${DIM}Fetching members...${RESET}"
       current_assignees=$(jq -r '.assignees // [] | map(.username) | join(", ")' <<< "$selected_issue_json")
-      members_json=$(fetch_all_members)
-      if jq -e 'type == "array"' <<< "$members_json" &>/dev/null; then
-        members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json" 2>/dev/null)
-      else
-        members=""
+      if ! members_json=$(fetch_all_members); then
+        printf "\r                                \r"
+        echo "  ${RED}${ICON_WARN}${RESET} Could not read GitLab project members."
+        continue
       fi
+      members=$(jq -r 'sort_by(.username) | .[] | "\(.username)  (\(.name))"' <<< "$members_json")
       printf "\r                                \r"
 
       if [[ -n "$current_assignees" ]]; then
@@ -254,14 +276,16 @@ ${members}"
         if [[ -z "$selected_member" ]]; then
           echo "  ${DIM}No changes made.${RESET}"
         elif [[ "$selected_member" == *"Unassign"* ]]; then
-          if glab issue update "$selected_iid" -a "" &>/dev/null; then
+          if require_writes_allowed "remove GitLab issue assignee" \
+            && glab issue update "$selected_iid" -a "" &>/dev/null; then
             echo "  ${GREEN}${ICON_OK}${RESET} Assignee removed"
           else
             echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
           fi
         else
           new_assignee=$(awk '{print $1}' <<< "$selected_member")
-          if glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null; then
+          if require_writes_allowed "update GitLab issue assignee" \
+            && glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null; then
             echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
           else
             echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
@@ -271,7 +295,8 @@ ${members}"
         echo -n "  ${ICON_NEW} Username (leave empty to skip): "
         read -r new_assignee
         if [[ -n "$new_assignee" ]]; then
-          if glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null; then
+          if require_writes_allowed "update GitLab issue assignee" \
+            && glab issue update "$selected_iid" -a "$new_assignee" &>/dev/null; then
             echo "  ${GREEN}${ICON_OK}${RESET} Assigned to ${DIM}${new_assignee}${RESET}"
           else
             echo "  ${RED}${ICON_WARN}${RESET} Failed to update assignee"
@@ -284,12 +309,12 @@ ${members}"
       echo ""
       echo -n "  ${DIM}Fetching milestones...${RESET}"
       current_ms=$(jq -r '.milestone.title // "none"' <<< "$selected_issue_json")
-      ms_json=$(fetch_all_milestones)
-      if jq -e 'type == "array"' <<< "$ms_json" &>/dev/null; then
-        milestones=$(jq -r '.[].title // empty' <<< "$ms_json" 2>/dev/null)
-      else
-        milestones=""
+      if ! ms_json=$(fetch_all_milestones); then
+        printf "\r                                \r"
+        echo "  ${RED}${ICON_WARN}${RESET} Could not read GitLab milestones."
+        continue
       fi
+      milestones=$(jq -r '.[].title // empty' <<< "$ms_json")
       printf "\r                                \r"
 
       echo "  ${DIM}Current:${RESET} ${current_ms}"
@@ -312,13 +337,15 @@ ${milestones}"
       if [[ -z "$selected_ms" ]]; then
         echo "  ${DIM}No changes made.${RESET}"
       elif [[ "$selected_ms" == *"Remove"* ]]; then
-        if glab issue update "$selected_iid" -m "" &>/dev/null; then
+        if require_writes_allowed "remove GitLab issue milestone" \
+          && glab issue update "$selected_iid" -m "" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Milestone removed"
         else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
         fi
       else
-        if glab issue update "$selected_iid" -m "$selected_ms" &>/dev/null; then
+        if require_writes_allowed "update GitLab issue milestone" \
+          && glab issue update "$selected_iid" -m "$selected_ms" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Milestone set to ${DIM}${selected_ms}${RESET}"
         else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to update milestone"
@@ -331,7 +358,8 @@ ${milestones}"
       echo -n "  ${BOLD}Close issue #${selected_iid}?${RESET} ${DIM}(y/n)${RESET} "
       read -r confirm_close
       if [[ "$confirm_close" == "y" ]]; then
-        if glab issue close "$selected_iid" &>/dev/null; then
+        if require_writes_allowed "close GitLab issue" \
+          && glab issue close "$selected_iid" &>/dev/null; then
           echo "  ${GREEN}${ICON_OK}${RESET} Issue #${selected_iid} closed"
         else
           echo "  ${RED}${ICON_WARN}${RESET} Failed to close issue"

@@ -1,26 +1,97 @@
 # Shared low-level helpers used across multiple flows.
 
-safe_json() {
-  local response="$1" fallback="${2:-[]}"
-  if jq -e . <<< "$response" &>/dev/null; then
-    printf '%s\n' "$response"
-  else
-    printf '%s\n' "$fallback"
+sanitize_error() {
+  local message="$1"
+  if [[ -n "${JIRA_TOKEN:-}" ]]; then
+    message="${message//$JIRA_TOKEN/<redacted>}"
   fi
+  printf '%s\n' "$message"
 }
 
-retry() {
+summarize_error() {
+  local message summary
+  message="$(sanitize_error "$1")"
+  summary="$(tail -n 1 <<< "$message")"
+  if [[ ${#summary} -gt 240 ]]; then
+    summary="${summary:0:237}..."
+  fi
+  printf '%s\n' "${summary:-request failed without an error message}"
+}
+
+api_error() {
+  local resource="$1" operation="$2" cause="$3"
+  printf '  %s%s%s %s %s failed: %s\n' \
+    "${RED:-}" "${ICON_WARN:-!}" "${RESET:-}" \
+    "$resource" "$operation" "$(summarize_error "$cause")" >&2
+}
+
+retry_safe() {
   local max_attempts="${1:-3}"
   shift
-  local attempt=1
+  local attempt=1 delay="${GLAB_HELPER_RETRY_BASE_DELAY:-1}"
+
   while (( attempt <= max_attempts )); do
-    if "$@" &>/dev/null; then
+    if "$@"; then
       return 0
     fi
     ((attempt++))
-    [[ $attempt -le $max_attempts ]] && sleep 1
+    if (( attempt <= max_attempts )); then
+      sleep "$delay"
+      delay=$((delay * 2))
+      (( delay > 8 )) && delay=8
+    fi
   done
   return 1
+}
+
+retry_read_json() {
+  local resource="$1" schema="$2"
+  shift 2
+  local attempt=1 max_attempts=3 delay="${GLAB_HELPER_RETRY_BASE_DELAY:-1}"
+  local output="" cause="" retry_after=""
+
+  while (( attempt <= max_attempts )); do
+    if output=$("$@" 2>&1); then
+      if jq -e "$schema" <<< "$output" &>/dev/null; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+      cause="response did not match the expected JSON schema"
+    else
+      cause="${output:-request exited with a non-zero status}"
+    fi
+
+    ((attempt++))
+    if (( attempt <= max_attempts )); then
+      retry_after=$(sed -nE \
+        's/.*[Rr]etry-[Aa]fter:[[:space:]]*([0-9]+).*/\1/p; s/.*[Rr]etry after[[:space:]]+([0-9]+).*/\1/p' \
+        <<< "$cause" | head -n 1)
+      if [[ "$retry_after" == <-> ]]; then
+        (( retry_after > 60 )) && retry_after=60
+        sleep "$retry_after"
+      else
+        sleep "$delay"
+      fi
+      delay=$((delay * 2))
+      (( delay > 8 )) && delay=8
+    fi
+  done
+
+  api_error "$resource" "read" "$cause"
+  return 1
+}
+
+retry_idempotent() {
+  retry_safe 3 "$@"
+}
+
+require_writes_allowed() {
+  local operation="${1:-mutation}"
+  if [[ "${DRY_RUN_MODE:-false}" == "true" ]]; then
+    api_error "$operation" "write" "blocked by --dry-run"
+    return 1
+  fi
+  return 0
 }
 
 csv_to_lines() {

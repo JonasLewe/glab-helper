@@ -1,4 +1,8 @@
 sync_epics() {
+  local sync_mode="${1:-apply}"
+  local dry_run=false
+  [[ "$sync_mode" == "dry-run" || "${DRY_RUN_MODE:-false}" == "true" ]] && dry_run=true
+
   echo ""
   echo "  ${MAGENTA}${ICON_SYNC}${RESET} ${BOLD}Sync Epics from Jira${RESET}"
   echo ""
@@ -24,7 +28,12 @@ sync_epics() {
   # Fetch existing milestones
   echo -n "  ${DIM}Checking existing milestones...${RESET}"
   local ms_json
-  ms_json=$(fetch_all_milestones)
+  if ! ms_json=$(fetch_all_milestones); then
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Epic sync aborted because GitLab milestones could not be read completely."
+    echo ""
+    return 1
+  fi
   printf "\r                                      \r"
 
   # Classify epics into new vs existing (to update)
@@ -36,7 +45,7 @@ sync_epics() {
   local -a update_epic_descs=()
   local -a update_epic_ms_ids=()
 
-  local ekey etitle edesc mdesc ms_id
+  local ekey etitle edesc mdesc ms_id old_title old_desc
   while IFS= read -r epic; do
     ekey=$(jq -r '.key' <<< "$epic")
     etitle=$(jq -r '.fields.summary' <<< "$epic")
@@ -52,10 +61,14 @@ sync_epics() {
       ms_id=$(jq -r --arg t "$etitle" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
     fi
     if [[ -n "$ms_id" ]]; then
-      update_epics+=("$etitle")
-      update_epic_keys+=("$ekey")
-      update_epic_descs+=("$mdesc")
-      update_epic_ms_ids+=("$ms_id")
+      old_title=$(jq -r --argjson id "$ms_id" '.[] | select(.id == $id) | .title // ""' <<< "$ms_json")
+      old_desc=$(jq -r --argjson id "$ms_id" '.[] | select(.id == $id) | .description // ""' <<< "$ms_json")
+      if [[ "$(trim_whitespace "$old_title")" != "$(trim_whitespace "$etitle")" || "$old_desc" != "$mdesc" ]]; then
+        update_epics+=("$etitle")
+        update_epic_keys+=("$ekey")
+        update_epic_descs+=("$mdesc")
+        update_epic_ms_ids+=("$ms_id")
+      fi
     else
       new_epics+=("$etitle")
       new_epic_keys+=("$ekey")
@@ -91,6 +104,13 @@ sync_epics() {
   hr
   echo ""
 
+  if $dry_run; then
+    echo "  ${GREEN}${ICON_OK}${RESET} ${BOLD}Dry-run complete${RESET}"
+    echo "  ${DIM}No GitLab changes were applied.${RESET}"
+    echo ""
+    return 0
+  fi
+
   echo -n "  ${BOLD}Proceed?${RESET} ${DIM}(y/n)${RESET} "
   read -r confirm
   if [[ "$confirm" != "y" ]]; then
@@ -108,7 +128,7 @@ sync_epics() {
     ms_desc="${new_epic_descs[$i]}"
     ms_cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
     [[ -n "$ms_desc" ]] && ms_cmd+=(-f "description=$ms_desc")
-    if retry 3 "${ms_cmd[@]}"; then
+    if require_writes_allowed "create GitLab milestone" && "${ms_cmd[@]}" &>/dev/null; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(created)${RESET}"
       ((created++))
     else
@@ -123,7 +143,7 @@ sync_epics() {
     ms_desc="${update_epic_descs[$i]}"
     ms_id="${update_epic_ms_ids[$i]}"
     ms_cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT -f "title=$ms_title" -f "description=$ms_desc")
-    if retry 3 "${ms_cmd[@]}"; then
+    if require_writes_allowed "update GitLab milestone" && retry_idempotent "${ms_cmd[@]}" &>/dev/null; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(updated)${RESET}"
       ((updated++))
     else
@@ -133,4 +153,7 @@ sync_epics() {
   done
 
   echo ""
+  echo "  ${ICON_MILE} Milestones: ${created} created, ${updated} updated, ${failed} failed"
+  echo ""
+  (( failed == 0 ))
 }

@@ -2,7 +2,6 @@ sync_stories() {
   local sync_mode="${1:-apply}"
   local dry_run=false
   local gl_issues_json synced_keys unsynced_json synced_json
-  local gl_page=1 gl_per_page=100 gl_page_json gl_page_count
   local unsynced_count synced_count preview_uptodate=0 gl_issue_count=0 existing_milestone_count=0
   local ms_json labels_json existing_labels plan_labels_csv
   local ms_match ms_id old_ms_title old_ms_desc
@@ -12,9 +11,9 @@ sync_stories() {
   local title_changed description_changed labels_changed labels_visible_changed milestone_changed status_changed
   local s_key s_summary s_desc s_priority s_labels_json s_epic_key s_subtasks_json s_status_name s_status_category
   local desired_status_rank current_status_rank target_status_label status_state_event status_from status_to unknown_status_key
-  local created=0 failed=0 issue_updated=0 issue_uptodate=0 labels_created=0
+  local created=0 failed=0 issue_updated=0 issue_uptodate=0 labels_created=0 label_failed=0
   local ms_created=0 ms_updated=0 ms_failed=0
-  local cmd output attempt max_attempts success created_iid issue_create_status_rank
+  local cmd output created_iid issue_create_status_rank dependency_failed
   local ms_title ms_desc ignored_title story_uses_ignored_epic=false
   local -a new_ms_plan=()
   local -a update_ms_plan=()
@@ -22,15 +21,17 @@ sync_stories() {
   local -a issue_update_plan=()
   local -a missing_project_labels=()
   local -a ignored_epic_plan=()
+  local -a unresolved_epic_plan=()
   local -a unknown_status_plan=()
   local -a changed_fields=()
   typeset -A epic_titles
   typeset -A epic_descs
   typeset -A ignored_epic_titles
+  typeset -A unresolved_epic_seen
   typeset -A missing_label_seen
   typeset -A unknown_status_seen
 
-  [[ "$sync_mode" == "dry-run" ]] && dry_run=true
+  [[ "$sync_mode" == "dry-run" || "${DRY_RUN_MODE:-false}" == "true" ]] && dry_run=true
 
   echo ""
   echo "  ${MAGENTA}${ICON_SYNC}${RESET} ${BOLD}Sync Stories from Jira${RESET}"
@@ -48,14 +49,12 @@ sync_stories() {
   echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${JIRA_STORIES_COUNT} stories fetched from Jira${RESET}"
 
   echo -n "  ${DIM}Checking synced issues...${RESET}"
-  gl_issues_json="[]"
-  while true; do
-    gl_page_json=$(safe_json "$(glab api "projects/$project_id/issues?state=all&per_page=${gl_per_page}&page=${gl_page}" 2>/dev/null)" "[]")
-    gl_page_count=$(jq 'length' <<< "$gl_page_json")
-    gl_issues_json=$(jq -s '.[0] + .[1]' <<< "${gl_issues_json}"$'\n'"${gl_page_json}")
-    [[ "$gl_page_count" -lt "$gl_per_page" ]] && break
-    ((gl_page++))
-  done
+  if ! gl_issues_json=$(fetch_all_issues "all"); then
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Story sync aborted because GitLab issues could not be read completely."
+    echo ""
+    return 1
+  fi
   synced_keys=$(jq -r '.[].title | capture("^\\[(?<key>[A-Z]+-[0-9]+)\\](\\s|$)")?.key // empty' <<< "$gl_issues_json")
   gl_issue_count=$(jq 'length' <<< "$gl_issues_json")
   printf "\r                                      \r"
@@ -80,7 +79,10 @@ sync_stories() {
   echo -n "  ${DIM}Fetching epics...${RESET}"
   if ! fetch_jira_epics; then
     printf "\r                                      \r"
-    echo "  ${YELLOW}${ICON_WARN}${RESET} ${DIM}Could not fetch epics — milestones will be skipped${RESET}"
+    echo "  ${RED}${ICON_WARN}${RESET} Story sync aborted because Jira epic data is incomplete."
+    echo "  ${DIM}No milestone or issue changes were planned or applied.${RESET}"
+    echo ""
+    return 1
   else
     printf "\r                                      \r"
     echo "  ${GREEN}${ICON_OK}${RESET} ${DIM}${JIRA_EPICS_COUNT} epics fetched from Jira${RESET}"
@@ -106,7 +108,11 @@ sync_stories() {
     done < <(jq -c '.[]' <<< "$JIRA_EPICS_JSON")
   fi
 
-  ms_json=$(fetch_all_milestones)
+  if ! ms_json=$(fetch_all_milestones); then
+    echo "  ${RED}${ICON_WARN}${RESET} Story sync aborted because GitLab milestones could not be read completely."
+    echo ""
+    return 1
+  fi
   existing_milestone_count=$(jq 'length' <<< "$ms_json")
 
   for ekey in "${(@k)epic_titles}"; do
@@ -187,8 +193,11 @@ sync_stories() {
     labels_csv=$(normalize_status_labels_csv "$labels_csv" "$(gitlab_status_label_for_rank "$desired_status_rank")")
     new_milestone=""
     if [[ -n "$s_epic_key" && "$s_epic_key" != "null" ]]; then
-      if [[ -z "${ignored_epic_titles[$s_epic_key]:-}" ]]; then
+      if [[ -n "${epic_titles[$s_epic_key]:-}" ]]; then
         new_milestone="${epic_titles[$s_epic_key]:-}"
+      elif [[ -z "${ignored_epic_titles[$s_epic_key]:-}" && -z "${unresolved_epic_seen[$s_epic_key]:-}" ]]; then
+        unresolved_epic_plan+=("$s_epic_key")
+        unresolved_epic_seen[$s_epic_key]=1
       fi
     fi
 
@@ -247,6 +256,13 @@ sync_stories() {
         if [[ -n "${ignored_epic_titles[$s_epic_key]:-}" ]]; then
           story_uses_ignored_epic=true
           new_milestone="$gl_milestone"
+        elif [[ -z "${epic_titles[$s_epic_key]:-}" ]]; then
+          story_uses_ignored_epic=true
+          new_milestone="$gl_milestone"
+          if [[ -z "${unresolved_epic_seen[$s_epic_key]:-}" ]]; then
+            unresolved_epic_plan+=("$s_epic_key")
+            unresolved_epic_seen[$s_epic_key]=1
+          fi
         else
           new_milestone="${epic_titles[$s_epic_key]:-}"
         fi
@@ -333,9 +349,25 @@ sync_stories() {
     done < <(jq -c '.[]' <<< "$synced_json")
   fi
 
+  if [[ ${#unresolved_epic_plan[@]} -gt 0 ]]; then
+    echo ""
+    echo "  ${RED}${ICON_WARN}${RESET} Story sync aborted because referenced Jira epics are missing:"
+    for ekey in "${unresolved_epic_plan[@]}"; do
+      echo "    ${ekey}"
+    done
+    echo "  ${DIM}Milestone changes are suspended; existing assignments remain unchanged.${RESET}"
+    echo ""
+    return 1
+  fi
+
   echo -n "  ${DIM}Checking project labels...${RESET}"
-  labels_json=$(fetch_all_labels)
-  existing_labels=$(jq -r '.[].name' <<< "$labels_json" 2>/dev/null || echo "")
+  if ! labels_json=$(fetch_all_labels); then
+    printf "\r                                      \r"
+    echo "  ${RED}${ICON_WARN}${RESET} Story sync aborted because GitLab labels could not be read completely."
+    echo ""
+    return 1
+  fi
+  existing_labels=$(jq -r '.[].name' <<< "$labels_json")
   for issue_plan in "${issue_create_plan[@]}" "${issue_update_plan[@]}"; do
     [[ -z "$issue_plan" ]] && continue
     plan_labels_csv=$(jq -r '.labels // .new_labels // ""' <<< "$issue_plan")
@@ -487,7 +519,7 @@ sync_stories() {
     ms_desc=$(jq -r '.description // ""' <<< "$milestone_plan")
     cmd=(glab api "projects/$project_id/milestones" -X POST -f "title=$ms_title")
     [[ -n "$ms_desc" ]] && cmd+=(-f "description=$ms_desc")
-    if retry 3 "${cmd[@]}"; then
+    if require_writes_allowed "create GitLab milestone" && "${cmd[@]}" &>/dev/null; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(created)${RESET}"
       ((ms_created++))
     else
@@ -505,7 +537,7 @@ sync_stories() {
     cmd=(glab api "projects/$project_id/milestones/$ms_id" -X PUT)
     [[ "$title_changed" == "true" ]] && cmd+=(-f "title=$ms_title")
     [[ "$description_changed" == "true" ]] && cmd+=(-f "description=$ms_desc")
-    if retry 3 "${cmd[@]}"; then
+    if require_writes_allowed "update GitLab milestone" && retry_idempotent "${cmd[@]}" &>/dev/null; then
       echo "  ${GREEN}${ICON_OK}${RESET} ${ms_title} ${DIM}(updated)${RESET}"
       ((ms_updated++))
     else
@@ -515,17 +547,29 @@ sync_stories() {
   done
 
   if [[ ${#new_ms_plan[@]} -gt 0 || ${#update_ms_plan[@]} -gt 0 ]]; then
-    ms_json=$(fetch_all_milestones)
+    if ! ms_json=$(fetch_all_milestones); then
+      echo "  ${RED}${ICON_WARN}${RESET} Could not verify milestone changes; dependent issues will not be changed."
+      echo ""
+      return 1
+    fi
   fi
 
   if [[ ${#missing_project_labels[@]} -gt 0 ]]; then
     echo -n "  ${DIM}Syncing labels...${RESET}"
     for lbl in "${missing_project_labels[@]}"; do
-      if glab label create -n "$lbl" &>/dev/null; then
+      if require_writes_allowed "create GitLab label" && glab label create -n "$lbl" &>/dev/null; then
         ((labels_created++))
+      else
+        ((label_failed++))
       fi
     done
     printf "\r                                      \r"
+    if ! labels_json=$(fetch_all_labels); then
+      echo "  ${RED}${ICON_WARN}${RESET} Could not verify label changes; dependent issues will not be changed."
+      echo ""
+      return 1
+    fi
+    existing_labels=$(jq -r '.[].name' <<< "$labels_json")
   fi
 
   if [[ ${#issue_create_plan[@]} -gt 0 ]]; then
@@ -541,30 +585,45 @@ sync_stories() {
     new_milestone=$(jq -r '.milestone // ""' <<< "$issue_plan")
     issue_create_status_rank=$(jq -r '.status_rank // 0' <<< "$issue_plan")
 
+    dependency_failed=false
+    while IFS= read -r lbl; do
+      [[ -z "$lbl" ]] && continue
+      if ! grep -qxF "$lbl" <<< "$existing_labels"; then
+        dependency_failed=true
+        echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— required label '${lbl}' is unavailable${RESET}"
+        break
+      fi
+    done < <(csv_to_lines "$labels_csv")
+    if $dependency_failed; then
+      ((failed++))
+      continue
+    fi
+
     cmd=(glab api "projects/$project_id/issues" -X POST -f "title=$new_title" -f "description=$new_description")
     [[ -n "$labels_csv" ]] && cmd+=(-f "labels=$labels_csv")
     if [[ -n "$new_milestone" ]]; then
       ms_id=$(jq -r --arg t "$new_milestone" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
-      [[ -n "$ms_id" ]] && cmd+=(-f "milestone_id=$ms_id")
+      if [[ -z "$ms_id" ]]; then
+        echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— required milestone is unavailable${RESET}"
+        ((failed++))
+        continue
+      fi
+      cmd+=(-f "milestone_id=$ms_id")
     fi
 
-    output="" attempt=1 max_attempts=3 success=false
-    while (( attempt <= max_attempts )); do
-      if output=$("${cmd[@]}" 2>&1); then
-        success=true
-        break
-      fi
-      ((attempt++))
-      [[ $attempt -le $max_attempts ]] && sleep 1
-    done
-    if $success; then
+    output=""
+    if require_writes_allowed "create GitLab issue" \
+      && output=$("${cmd[@]}" 2>&1) \
+      && jq -e 'type == "object" and (.iid | type == "number")' <<< "$output" &>/dev/null; then
       if [[ "$issue_create_status_rank" -eq 3 ]]; then
-        created_iid=$(jq -r '.iid // empty' <<< "$(safe_json "$output" "{}")")
+        created_iid=$(jq -r '.iid' <<< "$output")
         if [[ -n "$created_iid" ]]; then
-          if retry 3 glab api "projects/$project_id/issues/$created_iid" -X PUT -f "state_event=close" >/dev/null 2>&1; then
+          if require_writes_allowed "close GitLab issue" \
+            && retry_idempotent glab api "projects/$project_id/issues/$created_iid" -X PUT -f "state_event=close" >/dev/null 2>&1; then
             echo "  ${GREEN}${ICON_OK}${RESET} [${s_key}] ${s_summary} ${DIM}(closed)${RESET}"
           else
-            echo "  ${YELLOW}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}(created, close failed)${RESET}"
+            echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}(created, close failed)${RESET}"
+            ((failed++))
           fi
         else
           echo "  ${YELLOW}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}(created, close skipped)${RESET}"
@@ -574,7 +633,7 @@ sync_stories() {
       fi
       ((created++))
     else
-      echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— ${output}${RESET}"
+      echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— create failed or returned an invalid response${RESET}"
       ((failed++))
     fi
   done
@@ -600,6 +659,20 @@ sync_stories() {
       status_changed=$(jq -r '.status_changed' <<< "$issue_plan")
       status_state_event=$(jq -r '.state_event // ""' <<< "$issue_plan")
 
+      dependency_failed=false
+      while IFS= read -r lbl; do
+        [[ -z "$lbl" ]] && continue
+        if ! grep -qxF "$lbl" <<< "$existing_labels"; then
+          dependency_failed=true
+          echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— required label '${lbl}' is unavailable${RESET}"
+          break
+        fi
+      done < <(csv_to_lines "$merged_labels")
+      if $dependency_failed; then
+        ((failed++))
+        continue
+      fi
+
       cmd=(glab api "projects/$project_id/issues/$gl_iid" -X PUT)
       [[ "$title_changed" == "true" ]] && cmd+=(-f "title=$new_title")
       [[ "$description_changed" == "true" ]] && cmd+=(-f "description=$new_description")
@@ -609,7 +682,12 @@ sync_stories() {
       if [[ "$milestone_changed" == "true" ]]; then
         if [[ -n "$new_milestone" ]]; then
           ms_id=$(jq -r --arg t "$new_milestone" '[.[] | select(.title == $t)][0] | .id // empty' <<< "$ms_json" 2>/dev/null)
-          [[ -n "$ms_id" ]] && cmd+=(-f "milestone_id=$ms_id")
+          if [[ -z "$ms_id" ]]; then
+            echo "  ${RED}${ICON_WARN}${RESET} [${s_key}] ${s_summary} ${DIM}— required milestone is unavailable${RESET}"
+            ((failed++))
+            continue
+          fi
+          cmd+=(-f "milestone_id=$ms_id")
         else
           cmd+=(-f "milestone_id=0")
         fi
@@ -618,7 +696,7 @@ sync_stories() {
         cmd+=(-f "state_event=$status_state_event")
       fi
 
-      if retry 3 "${cmd[@]}"; then
+      if require_writes_allowed "update GitLab issue" && retry_idempotent "${cmd[@]}" &>/dev/null; then
         echo "  ${GREEN}${ICON_OK}${RESET} [${s_key}] ${s_summary} ${DIM}(updated)${RESET}"
         ((issue_updated++))
       else
@@ -647,5 +725,12 @@ sync_stories() {
   if [[ $labels_created -gt 0 ]]; then
     echo "  ${ICON_LABEL} Labels:     ${GREEN}${labels_created} created${RESET}"
   fi
+  if [[ $label_failed -gt 0 ]]; then
+    echo "  ${ICON_LABEL} Labels:     ${RED}${label_failed} failed${RESET}"
+  fi
+  if [[ $ms_failed -gt 0 ]]; then
+    echo "  ${ICON_MILE} Milestones: ${RED}${ms_failed} failed${RESET}"
+  fi
   echo ""
+  (( failed == 0 && ms_failed == 0 && label_failed == 0 ))
 }

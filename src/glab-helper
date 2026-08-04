@@ -34,6 +34,9 @@ SCRIPT_DIR="${0:P:h}"
 DEV_MODE=false
 DRY_RUN_MODE=false
 SCRIPT_FLAGS=()
+SHOW_HELP=false
+SHOW_VERSION=false
+GLAB_HELPER_VERSION="0.1.0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,10 +49,17 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      break
+      SHOW_HELP=true
+      shift
+      ;;
+    --version)
+      SHOW_VERSION=true
+      shift
       ;;
     *)
-      break
+      echo "Unknown argument: $1" >&2
+      echo "Usage: glab-helper [--dev] [--dry-run] [--version]" >&2
+      exit 2
       ;;
   esac
 done
@@ -57,15 +67,21 @@ done
 $DEV_MODE && SCRIPT_FLAGS+=(--dev)
 $DRY_RUN_MODE && SCRIPT_FLAGS+=(--dry-run)
 
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+if $SHOW_VERSION; then
+  echo "glab-helper ${GLAB_HELPER_VERSION}"
+  exit 0
+fi
+
+if $SHOW_HELP; then
   echo ""
   echo "  glab-helper — Interactive GitLab workflow helper"
   echo ""
-  echo "  Usage: glab-helper [--dev] [--dry-run]"
+  echo "  Usage: glab-helper [--dev] [--dry-run] [--version]"
   echo ""
   echo "  Options:"
-  echo "    --dev, -d   Enable developer mode (advanced commands, skip Jira project check)"
-  echo "    --dry-run   Show explicit preview-only sync actions in developer mode"
+  echo "    --dev, -d   Skip the Jira target-project check"
+  echo "    --dry-run   Read-only mode; preview Jira syncs without any writes"
+  echo "    --version   Show version and exit"
   echo ""
   echo "  Run from any cloned GitLab repo. Requires: glab, fzf, jq"
   echo "  Authenticate first: glab auth login"
@@ -140,7 +156,10 @@ clear
 echo ""
 echo -n "  ${DIM}Connecting to GitLab...${RESET}"
 
-repo_info=$(glab repo view --output json 2>/dev/null) || {
+repo_info=$(retry_read_json \
+  "GitLab repository" \
+  'type == "object" and (.id | type == "number") and ((.path_with_namespace // .name_with_namespace // .name) | type == "string")' \
+  glab repo view --output json) || {
   printf "\r                                \r"
   echo ""
   echo "  ${RED}${ICON_WARN} Not in a GitLab repo or not authenticated.${RESET}"
@@ -201,22 +220,23 @@ echo ""
 # MAIN MENU
 # ═══════════════════════════════════════════
 
-menu_options="${ICON_NEW} Create issue
-${ICON_TITLE} Work on existing issue"
-menu_options="${menu_options}
+if $DRY_RUN_MODE; then
+  if ! $JIRA_AVAILABLE; then
+    echo "  ${YELLOW}${ICON_WARN}${RESET} No read-only Jira previews are available."
+    echo ""
+    exit 0
+  fi
+  menu_options="${ICON_SYNC} Preview epic sync from Jira
+${ICON_SYNC} Preview story sync from Jira"
+else
+  menu_options="${ICON_NEW} Create issue
+${ICON_TITLE} Work on existing issue
 ${ICON_TITLE} Export GitLab snapshot"
-if $JIRA_AVAILABLE; then
-  menu_options="${menu_options}
+  if $JIRA_AVAILABLE; then
+    menu_options="${menu_options}
 ${ICON_SYNC} Sync epics from Jira
 ${ICON_SYNC} Sync stories from Jira"
-fi
-if $JIRA_AVAILABLE && $DEV_MODE && $DRY_RUN_MODE; then
-  menu_options="${menu_options}
-${ICON_SYNC} Preview story sync from Jira"
-fi
-if $DEV_MODE; then
-  menu_options="${menu_options}
-${ICON_WARN} Reset: delete all issues & milestones"
+  fi
 fi
 
 action=$(fzf \
@@ -247,6 +267,7 @@ elif [[ "$action" == *"Work on existing"* ]]; then
 
 elif [[ "$action" == *"Create"* ]]; then
   create_issue
+  exit $?
 
 # ═══════════════════════════════════════════════════════════════
 # PATH: EXPORT GITLAB SNAPSHOT
@@ -262,7 +283,7 @@ elif [[ "$action" == *"Export GitLab snapshot"* ]]; then
 
 elif [[ "$action" == *"Sync epics"* ]]; then
   sync_epics
-  exit 0
+  exit $?
 
 # ═══════════════════════════════════════════════════════════════
 # PATH: SYNC STORIES FROM JIRA
@@ -270,7 +291,7 @@ elif [[ "$action" == *"Sync epics"* ]]; then
 
 elif [[ "$action" == *"Sync stories"* ]]; then
   sync_stories
-  exit 0
+  exit $?
 
 # ═══════════════════════════════════════════════════════════════
 # PATH: PREVIEW STORY SYNC FROM JIRA
@@ -278,64 +299,14 @@ elif [[ "$action" == *"Sync stories"* ]]; then
 
 elif [[ "$action" == *"Preview story sync"* ]]; then
   sync_stories dry-run
-  exit 0
+  exit $?
 
 # ═══════════════════════════════════════════════════════════════
-# PATH: RESET (test mode only)
+# PATH: PREVIEW EPIC SYNC FROM JIRA
 # ═══════════════════════════════════════════════════════════════
 
-elif [[ "$action" == *"Reset"* ]]; then
-  echo ""
-  echo "  ${RED}${ICON_WARN}${RESET} ${BOLD}Reset: delete all issues & milestones${RESET}"
-  echo ""
-
-  # Count issues and milestones (paginated, all states)
-  echo -n "  ${DIM}Counting...${RESET}"
-  issues_json=$(fetch_all_issues)
-  issue_count=$(jq 'length' <<< "$issues_json")
-  ms_json=$(fetch_all_milestones "")
-  ms_count=$(jq 'length' <<< "$ms_json")
-
-  printf "\r                          \r"
-
-  if [[ "$issue_count" -eq 0 && "$ms_count" -eq 0 ]]; then
-    echo "  ${DIM}Nothing to delete.${RESET}"
-    echo ""
-    exit 0
-  fi
-
-  echo "  ${RED}${issue_count}${RESET} issues and ${RED}${ms_count}${RESET} milestones will be deleted."
-  echo ""
-  echo -n "  ${BOLD}Type '${RED}delete${RESET}${BOLD}' to confirm:${RESET} "
-  read -r confirm
-  if [[ "$confirm" != "delete" ]]; then
-    echo ""
-    echo "  ${YELLOW}${ICON_WARN}${RESET} Aborted."
-    exit 0
-  fi
-
-  echo ""
-
-  # Delete issues
-  del_issues=0
-  while IFS= read -r iid; do
-    [[ -z "$iid" ]] && continue
-    if glab api "projects/$project_id/issues/$iid" -X DELETE &>/dev/null; then
-      ((del_issues++))
-    fi
-  done < <(jq -r '.[].iid' <<< "$issues_json")
-
-  # Delete milestones
-  del_ms=0
-  while IFS= read -r mid; do
-    [[ -z "$mid" ]] && continue
-    if glab api "projects/$project_id/milestones/$mid" -X DELETE &>/dev/null; then
-      ((del_ms++))
-    fi
-  done < <(jq -r '.[].id' <<< "$ms_json")
-
-  echo "  ${GREEN}${ICON_OK}${RESET} Deleted ${del_issues} issues, ${del_ms} milestones."
-  echo ""
-  exit 0
+elif [[ "$action" == *"Preview epic sync"* ]]; then
+  sync_epics dry-run
+  exit $?
 
 fi
