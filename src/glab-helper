@@ -90,7 +90,7 @@ if $SHOW_HELP; then
   echo ""
   echo "  Options:"
   echo "    --dev, -d   Show developer actions and skip the Jira target-project check"
-  echo "    --maintenance  Show scoped Jira-sync maintenance actions"
+  echo "    --maintenance  Show destructive project maintenance actions"
   echo "    --dry-run   Read-only mode; preview Jira syncs without any writes"
   echo "    --version   Show version and exit"
   echo ""
@@ -240,10 +240,10 @@ fi
 
 if $MAINTENANCE_MODE; then
   if $DRY_RUN_MODE; then
-    menu_options="${ICON_WARN} Preview Jira sync reset
+    menu_options="${ICON_WARN} Preview full project reset
 ${ICON_EXIT} Exit"
   else
-    menu_options="${ICON_WARN} Reset Jira sync data
+    menu_options="${ICON_WARN} Reset all issues & milestones
 ${ICON_EXIT} Exit"
   fi
 elif $DRY_RUN_MODE; then
@@ -305,11 +305,11 @@ elif [[ "$action" == *"Exit"* ]]; then
   exit 0
 
 # ═════════════════════════════════════════════════════════════
-# PATH: RESET JIRA SYNC DATA
+# PATH: RESET PROJECT PLANNING DATA
 # ═════════════════════════════════════════════════════════════
 
-elif [[ "$action" == *"Jira sync reset"* || "$action" == *"Reset Jira sync data"* ]]; then
-  reset_jira_sync_data
+elif [[ "$action" == *"full project reset"* || "$action" == *"Reset all issues"* ]]; then
+  reset_project_planning_data
   exit $?
 
 # PATH: WORK ON EXISTING ISSUE

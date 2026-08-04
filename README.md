@@ -66,8 +66,9 @@ glab-helper [--dev | --maintenance] [--dry-run] [--version]
 The `--dev` flag exposes advanced developer actions and skips the Jira
 target-project check. It does not expose reset or other bulk-delete commands.
 
-The separate `--maintenance` flag exposes scoped Jira-sync cleanup. It cannot
-be combined with `--dev` and never skips the configured target-project check.
+The separate `--maintenance` flag exposes destructive project cleanup. It
+cannot be combined with `--dev` and never skips the configured target-project
+check.
 
 The `--dry-run` flag makes the complete process read-only. The normal menu
 contains one combined `Preview Jira` action; `--dev --dry-run` exposes separate
@@ -132,7 +133,7 @@ Only the standalone export action is hidden from the normal menu.
 
 ### Maintenance reset
 
-Use maintenance mode to remove Jira-derived GitLab planning data before a clean
+Use maintenance mode to remove all GitLab issues and milestones before a clean
 resync. Always inspect the read-only plan first:
 
 ```bash
@@ -145,19 +146,18 @@ If the plan is correct, run:
 glab-helper --maintenance
 ```
 
-The reset deletes:
+The reset permanently deletes:
 
-- open and closed GitLab issues whose title starts with a Jira key such as
-  `[PROJ-123]`, including legacy sync results;
-- GitLab milestones whose description contains the Jira provenance marker.
+- every open and closed GitLab issue in the configured target project;
+- every active and closed project milestone.
 
-It preserves branches, labels, merge requests, manual issues without a Jira-key
-prefix, and unmarked milestones. Before the first deletion it requires typing
-`RESET <full-project-path>`, creates a complete local snapshot, and revalidates
-that the displayed plan has not changed. If an issue deletion fails, milestone
-deletion is skipped. Issue deletion is permanent and includes its discussions;
-the snapshot is an audit backup, not an automatic restore mechanism. The GitLab
-identity must have permission to delete both project issues and milestones.
+It preserves branches, labels, and merge requests. Before the first deletion it
+requires typing `RESET ALL <full-project-path>`, creates a complete local
+snapshot, and revalidates that the displayed plan has not changed. If an issue
+deletion fails, milestone deletion is skipped. Issue deletion is permanent and
+includes its discussions; the snapshot is an audit backup, not an automatic
+restore mechanism. The GitLab identity must have permission to delete both
+project issues and milestones.
 
 ## Sync safety
 
@@ -174,9 +174,8 @@ identity must have permission to delete both project issues and milestones.
   and idempotent updates use bounded exponential backoff.
 - Partial failures and failed snapshot exports return a non-zero exit status.
 - Unscoped project reset is not available in the normal or `--dev` TUI. The
-  separate maintenance reset only targets Jira-marked data and requires a
-  matching configured target project, exact confirmation, mandatory snapshot,
-  and plan revalidation.
+  separate maintenance reset requires a matching configured target project,
+  exact full-reset confirmation, mandatory snapshot, and plan revalidation.
 
 ### Branch creation
 

@@ -169,7 +169,7 @@ EOF
     || "$(cat "$menu_capture")" != *"Create issue"* \
     || "$(cat "$menu_capture")" != *"Work on existing issue"* \
     || "$(cat "$menu_capture")" != *"Export GitLab snapshot"* \
-    || "$(cat "$menu_capture")" == *"Reset Jira sync data"* \
+    || "$(cat "$menu_capture")" == *"Reset"* \
     || "$(cat "$menu_capture")" == *$'\n'"~ Sync Jira"* \
     || "$(tail -n 1 "$menu_capture")" != "× Exit" ]]; then
     fail "$name" "$output"

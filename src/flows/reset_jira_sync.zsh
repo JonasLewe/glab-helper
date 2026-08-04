@@ -1,29 +1,13 @@
-# Maintenance-only cleanup for GitLab artifacts created from Jira data.
+# Maintenance-only cleanup for all GitLab issues and milestones.
 
-filter_jira_sync_issues() {
-  jq -c '
-    map(select(
-      ((.description // "") | test("<!-- glab-helper:jira-story:[A-Z][A-Z0-9_]*-[0-9]+ -->"))
-      or ((.title // "") | test("^\\[[A-Z][A-Z0-9_]*-[0-9]+\\](\\s|$)"))
-    ))
-  ' <<< "$1"
-}
-
-filter_jira_sync_milestones() {
-  jq -c '
-    map(select(
-      ((.description // "") | test("<!-- jira:[A-Z][A-Z0-9_]*-[0-9]+ -->"))
-    ))
-  ' <<< "$1"
-}
-
-reset_jira_sync_data() {
+reset_project_planning_data() {
   local issues_json milestones_json reset_issues reset_milestones
   local current_issues_json current_milestones_json current_reset_issues current_reset_milestones
   local planned_issue_fingerprint current_issue_fingerprint
   local planned_milestone_fingerprint current_milestone_fingerprint
   local issue_count milestone_count expected_confirmation confirmation
   local iid milestone_id
+  local delete_error
   local deleted_issues=0 deleted_milestones=0 failed_issues=0 failed_milestones=0
   local issue_schema='type == "array" and all(.[];
     (.iid | type == "number")
@@ -35,7 +19,7 @@ reset_jira_sync_data() {
     and ((.description == null) or (.description | type == "string")))'
 
   echo ""
-  echo "  ${RED}${ICON_WARN}${RESET} ${BOLD}Reset Jira sync data${RESET}"
+  echo "  ${RED}${ICON_WARN}${RESET} ${BOLD}Reset all issues and milestones${RESET}"
   echo ""
 
   if [[ "${MAINTENANCE_MODE:-false}" != "true" ]]; then
@@ -69,8 +53,8 @@ reset_jira_sync_data() {
     return 1
   fi
 
-  reset_issues=$(filter_jira_sync_issues "$issues_json")
-  reset_milestones=$(filter_jira_sync_milestones "$milestones_json")
+  reset_issues="$issues_json"
+  reset_milestones="$milestones_json"
   issue_count=$(jq 'length' <<< "$reset_issues")
   milestone_count=$(jq 'length' <<< "$reset_milestones")
   printf "\r                                      \r"
@@ -79,22 +63,22 @@ reset_jira_sync_data() {
   echo ""
 
   if [[ "$issue_count" -eq 0 && "$milestone_count" -eq 0 ]]; then
-    echo "  ${DIM}No Jira-synchronized issues or milestones found.${RESET}"
+    echo "  ${DIM}No issues or milestones found.${RESET}"
     echo ""
     return 0
   fi
 
-  echo "  ${RED}${issue_count}${RESET} Jira issues will be permanently deleted:"
+  echo "  ${RED}${issue_count}${RESET} issues will be permanently deleted:"
   if [[ "$issue_count" -gt 0 ]]; then
     jq -r '.[] | "    #\(.iid) [\(.state // "unknown")] \(.title)"' <<< "$reset_issues"
   fi
   echo ""
-  echo "  ${RED}${milestone_count}${RESET} Jira milestones will be permanently deleted:"
+  echo "  ${RED}${milestone_count}${RESET} milestones will be permanently deleted:"
   if [[ "$milestone_count" -gt 0 ]]; then
     jq -r '.[] | "    ID \(.id) \(.title)"' <<< "$reset_milestones"
   fi
   echo ""
-  echo "  ${DIM}Branches, labels, merge requests, and unmarked milestones are preserved.${RESET}"
+  echo "  ${DIM}Branches, labels, and merge requests are preserved.${RESET}"
   echo ""
 
   if [[ "${DRY_RUN_MODE:-false}" == "true" ]]; then
@@ -104,7 +88,7 @@ reset_jira_sync_data() {
     return 0
   fi
 
-  expected_confirmation="RESET ${repo_name}"
+  expected_confirmation="RESET ALL ${repo_name}"
   echo "  ${RED}${BOLD}This permanently deletes GitLab issues and their discussions.${RESET}"
   echo -n "  ${BOLD}Type '${expected_confirmation}' to continue:${RESET} "
   read -r confirmation
@@ -117,7 +101,7 @@ reset_jira_sync_data() {
 
   echo ""
   echo "  ${DIM}Creating mandatory pre-reset snapshot...${RESET}"
-  if ! export_gitlab_snapshot "pre-reset-jira-sync"; then
+  if ! export_gitlab_snapshot "pre-reset-all-issues-milestones"; then
     echo "  ${RED}${ICON_WARN}${RESET} Reset aborted because the mandatory snapshot failed."
     echo ""
     return 1
@@ -133,8 +117,8 @@ reset_jira_sync_data() {
     return 1
   fi
 
-  current_reset_issues=$(filter_jira_sync_issues "$current_issues_json")
-  current_reset_milestones=$(filter_jira_sync_milestones "$current_milestones_json")
+  current_reset_issues="$current_issues_json"
+  current_reset_milestones="$current_milestones_json"
   planned_issue_fingerprint=$(jq -S -c 'map({iid, title, description}) | sort_by(.iid)' <<< "$reset_issues")
   current_issue_fingerprint=$(jq -S -c 'map({iid, title, description}) | sort_by(.iid)' <<< "$current_reset_issues")
   planned_milestone_fingerprint=$(jq -S -c 'map({id, title, description}) | sort_by(.id)' <<< "$reset_milestones")
@@ -148,15 +132,16 @@ reset_jira_sync_data() {
     return 1
   fi
 
-  echo "  ${DIM}Deleting Jira-synchronized issues...${RESET}"
+  echo "  ${DIM}Deleting all issues...${RESET}"
   while IFS= read -r iid; do
     [[ -z "$iid" ]] && continue
-    if require_writes_allowed "delete Jira-synchronized GitLab issue" \
-      && glab api "projects/$project_id/issues/$iid" -X DELETE &>/dev/null; then
+    delete_error=""
+    if require_writes_allowed "delete GitLab issue" \
+      && delete_error=$(glab api "projects/$project_id/issues/$iid" -X DELETE 2>&1); then
       ((deleted_issues++))
     else
       ((failed_issues++))
-      echo "  ${RED}${ICON_WARN}${RESET} Failed to delete issue #${iid}."
+      echo "  ${RED}${ICON_WARN}${RESET} Failed to delete issue #${iid}: $(summarize_error "$delete_error")"
     fi
   done < <(jq -r '.[].iid' <<< "$reset_issues")
 
@@ -167,15 +152,16 @@ reset_jira_sync_data() {
     return 1
   fi
 
-  echo "  ${DIM}Deleting Jira-synchronized milestones...${RESET}"
+  echo "  ${DIM}Deleting all milestones...${RESET}"
   while IFS= read -r milestone_id; do
     [[ -z "$milestone_id" ]] && continue
-    if require_writes_allowed "delete Jira-synchronized GitLab milestone" \
-      && glab api "projects/$project_id/milestones/$milestone_id" -X DELETE &>/dev/null; then
+    delete_error=""
+    if require_writes_allowed "delete GitLab milestone" \
+      && delete_error=$(glab api "projects/$project_id/milestones/$milestone_id" -X DELETE 2>&1); then
       ((deleted_milestones++))
     else
       ((failed_milestones++))
-      echo "  ${RED}${ICON_WARN}${RESET} Failed to delete milestone ID ${milestone_id}."
+      echo "  ${RED}${ICON_WARN}${RESET} Failed to delete milestone ID ${milestone_id}: $(summarize_error "$delete_error")"
     fi
   done < <(jq -r '.[].id' <<< "$reset_milestones")
 

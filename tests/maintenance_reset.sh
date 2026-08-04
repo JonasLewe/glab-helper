@@ -40,7 +40,7 @@ EOF
   )"; then
     fail "$name" "$output"
   fi
-  if [[ "$(cat "$menu_capture")" != $'! Reset Jira sync data\n× Exit' ]]; then
+  if [[ "$(cat "$menu_capture")" != $'! Reset all issues & milestones\n× Exit' ]]; then
     fail "$name" "$output"
   fi
 
@@ -50,7 +50,7 @@ EOF
   )"; then
     fail "$name" "$output"
   fi
-  if [[ "$(cat "$menu_capture")" != $'! Preview Jira sync reset\n× Exit' ]]; then
+  if [[ "$(cat "$menu_capture")" != $'! Preview full project reset\n× Exit' ]]; then
     fail "$name" "$output"
   fi
 
@@ -127,7 +127,9 @@ case "$*" in
     fi
     ;;
   "api projects/1/issues/12 -X DELETE") ;;
+  "api projects/1/issues/13 -X DELETE") ;;
   "api projects/1/milestones/21 -X DELETE") ;;
+  "api projects/1/milestones/22 -X DELETE") ;;
   *) printf 'unexpected glab invocation: %s\n' "$*" >&2; exit 1 ;;
 esac
 EOF
@@ -147,7 +149,7 @@ run_maintenance_reset_dry_run_smoke() {
   mkdir -p "$workdir" "$stubdir"
   trap 'rm -rf "$tmpdir"' RETURN
 
-  printf '%s\n' '! Preview Jira sync reset' >"$responses_file"
+  printf '%s\n' '! Preview full project reset' >"$responses_file"
   : >"$command_log"
   write_maintenance_reset_stubs "$stubdir"
 
@@ -160,12 +162,12 @@ run_maintenance_reset_dry_run_smoke() {
     fail "$name" "$output"
   fi
 
-  if [[ "$output" != *"Jira issues will be permanently deleted"* \
-    || "$output" != *"Jira milestones will be permanently deleted"* \
+  if [[ "$output" != *"issues will be permanently deleted"* \
+    || "$output" != *"milestones will be permanently deleted"* \
     || "$output" != *"#11"* \
     || "$output" != *"#12"* \
-    || "$output" == *"#13"* \
-    || "$output" == *"Manual milestone"* \
+    || "$output" != *"#13"* \
+    || "$output" != *"Manual milestone"* \
     || "$output" != *"No GitLab changes or local snapshots were written"* ]]; then
     fail "$name" "$output"
   fi
@@ -173,7 +175,7 @@ run_maintenance_reset_dry_run_smoke() {
     fail "$name" "Dry-run wrote data: $(cat "$command_log")"
   fi
 
-  printf '%s\n' '! Reset Jira sync data' >"$responses_file"
+  printf '%s\n' '! Reset all issues & milestones' >"$responses_file"
   : >"$command_log"
   if ! output="$(
     cd "$workdir"
@@ -204,7 +206,7 @@ run_maintenance_reset_apply_smoke() {
   mkdir -p "$workdir" "$stubdir"
   trap 'rm -rf "$tmpdir"' RETURN
 
-  printf '%s\n' '! Reset Jira sync data' >"$responses_file"
+  printf '%s\n' '! Reset all issues & milestones' >"$responses_file"
   : >"$command_log"
   write_maintenance_reset_stubs "$stubdir"
 
@@ -212,13 +214,13 @@ run_maintenance_reset_apply_smoke() {
     cd "$workdir"
     PATH="$stubdir:$PATH" TERM=xterm COMMAND_LOG="$command_log" \
       FZF_RESPONSES_FILE="$responses_file" \
-      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET group/project' 2>&1
+      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET ALL group/project' 2>&1
   )"; then
     fail "$name" "$output"
   fi
 
   snapshot_dir="$(find "$workdir/.glab-helper-snapshots" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  if [[ "$output" != *"Reset complete: 2 issues and 1 milestones deleted"* \
+  if [[ "$output" != *"Reset complete: 3 issues and 2 milestones deleted"* \
     || -z "$snapshot_dir" \
     || ! -f "$snapshot_dir/issues.json" \
     || ! -f "$snapshot_dir/milestones.json" \
@@ -227,9 +229,9 @@ run_maintenance_reset_apply_smoke() {
   fi
   if ! rg -q -F 'api projects/1/issues/11 -X DELETE' "$command_log" \
     || ! rg -q -F 'api projects/1/issues/12 -X DELETE' "$command_log" \
+    || ! rg -q -F 'api projects/1/issues/13 -X DELETE' "$command_log" \
     || ! rg -q -F 'api projects/1/milestones/21 -X DELETE' "$command_log" \
-    || rg -q -F 'issues/13 -X DELETE' "$command_log" \
-    || rg -q -F 'milestones/22 -X DELETE' "$command_log"; then
+    || ! rg -q -F 'api projects/1/milestones/22 -X DELETE' "$command_log"; then
     fail "$name" "Deletion scope was incorrect: $(cat "$command_log")"
   fi
 
@@ -248,7 +250,7 @@ run_maintenance_reset_failure_smoke() {
   mkdir -p "$workdir" "$stubdir"
   trap 'rm -rf "$tmpdir"' RETURN
 
-  printf '%s\n' '! Reset Jira sync data' >"$responses_file"
+  printf '%s\n' '! Reset all issues & milestones' >"$responses_file"
   : >"$command_log"
   write_maintenance_reset_stubs "$stubdir"
 
@@ -257,26 +259,27 @@ run_maintenance_reset_failure_smoke() {
     cd "$workdir"
     PATH="$stubdir:$PATH" TERM=xterm COMMAND_LOG="$command_log" \
       RESET_SCENARIO=issue-failure FZF_RESPONSES_FILE="$responses_file" \
-      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET group/project' 2>&1
+      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET ALL group/project' 2>&1
   )"
   rc=$?
   set -e
 
   if [[ $rc -eq 0 \
     || "$output" != *"Milestone deletion skipped"* \
+    || "$output" != *"HTTP 403"* \
     || ! -d "$workdir/.glab-helper-snapshots" ]] \
     || rg -q -- 'milestones/[0-9]+ -X DELETE' "$command_log"; then
     fail "$name" "$output"
   fi
 
-  printf '%s\n' '! Reset Jira sync data' >"$responses_file"
+  printf '%s\n' '! Reset all issues & milestones' >"$responses_file"
   : >"$command_log"
   set +e
   output="$(
     cd "$workdir"
     PATH="$stubdir:$PATH" TERM=xterm COMMAND_LOG="$command_log" \
       RESET_SCENARIO=plan-change FZF_RESPONSES_FILE="$responses_file" \
-      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET group/project' 2>&1
+      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET ALL group/project' 2>&1
   )"
   rc=$?
   set -e
@@ -287,14 +290,14 @@ run_maintenance_reset_failure_smoke() {
     fail "$name" "Changed plan was not blocked: $output"
   fi
 
-  printf '%s\n' '! Reset Jira sync data' >"$responses_file"
+  printf '%s\n' '! Reset all issues & milestones' >"$responses_file"
   : >"$command_log"
   set +e
   output="$(
     cd "$workdir"
     PATH="$stubdir:$PATH" TERM=xterm COMMAND_LOG="$command_log" \
       RESET_SCENARIO=snapshot-failure FZF_RESPONSES_FILE="$responses_file" \
-      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET group/project' 2>&1
+      "$ROOT_DIR/src/glab-helper" --maintenance <<< 'RESET ALL group/project' 2>&1
   )"
   rc=$?
   set -e
