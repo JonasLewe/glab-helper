@@ -148,7 +148,7 @@ Before enabling the integration, verify that:
    `JIRA_TARGET_PROJECT`.
 
 2. Choose a GitLab project to hold the Jira configuration. The current default
-   is `ibm/glab-helper`. A different project is selected with its URL-encoded
+   is `glab-helper`. A different project is selected with its URL-encoded
    path:
 
    ```bash
