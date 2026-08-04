@@ -109,24 +109,87 @@ When creating a branch, you can:
 
 ## Jira Integration (optional)
 
-Enables one-way sync of Jira User Stories to GitLab issues. Stories are filtered by board labels and only unsynced stories are shown.
+Jira integration is deliberately one-way:
+
+```text
+Jira (read-only)  ──>  GitLab (read/write)
+```
+
+`glab-helper` only sends GET requests to Jira. It never creates, edits,
+transitions, comments on, or deletes Jira issues. Use a dedicated Jira account
+or token with read-only access. Normal syncs can create or update GitLab issues,
+labels, and milestones, but always show a preview and ask for confirmation
+first.
+
+### Prerequisites
+
+Before enabling the integration, verify that:
+
+- the Jira instance is Jira Data Center with REST API v2 and Bearer-token
+  authentication;
+- the token can read every Jira issue selected by the configured labels;
+- relevant issue types are named exactly `Story` and `Epic`;
+- stories and epics share a unique Jira label for this GitLab target;
+- the Story-to-Epic link is available as the string field
+  `customfield_10000` if milestone mapping is required;
+- `glab auth status` succeeds for the GitLab instance;
+- the GitLab identity can read the configuration project's CI/CD variables and
+  can create or update issues, labels, and milestones in the target project.
 
 ### Setup
 
-Set these as **Project Variables** in the glab-helper GitLab project (Settings > CI/CD > Variables):
+1. From the cloned target repository, determine its exact GitLab path:
 
-| Variable | Example | Masked? |
-|----------|---------|---------|
-| `JIRA_URL` | `https://jira.company.com` | No |
-| `JIRA_BOARD_LABELS` | `team-a,project-x` | No |
-| `JIRA_TOKEN` | Personal Access Token | **Yes** |
-| `JIRA_TARGET_PROJECT` | `group/project-name` | No |
+   ```bash
+   glab repo view --output json | jq -r '.path_with_namespace'
+   ```
 
-- `JIRA_BOARD_LABELS`: comma-separated Jira labels used to filter stories
-- `JIRA_TARGET_PROJECT`: the GitLab project path where issues should be created (Jira option only appears in this project)
-- `JIRA_TOKEN`: a PAT with read access to Jira (Data Center: Bearer token)
+   Use the complete result, including any subgroup, as
+   `JIRA_TARGET_PROJECT`.
 
-Team members need access to the glab-helper project to read the variables.
+2. Choose a GitLab project to hold the Jira configuration. The current default
+   is `ibm/glab-helper`. A different project is selected with its URL-encoded
+   path:
+
+   ```bash
+   export GLAB_HELPER_JIRA_PROJECT_PATH='group%2Fglab-helper'
+   ```
+
+   Encode every `/` as `%2F`. Put the export in your shell configuration if
+   this is the permanent configuration project.
+
+3. In that project's **Settings > CI/CD > Variables**, create:
+
+   | Variable | Example | Masked? | Purpose |
+   |---|---|---:|---|
+   | `JIRA_URL` | `https://jira.company.com` | No | Base URL without a trailing slash |
+   | `JIRA_BOARD_LABELS` | `team-a,project-x` | No | Comma-separated Jira labels used by the JQL filter |
+   | `JIRA_TOKEN` | Personal Access Token | **Yes** | Read-only Jira Data Center Bearer token |
+   | `JIRA_TARGET_PROJECT` | `group/project-name` | No | Exact GitLab `path_with_namespace` allowed to sync |
+
+   The Jira query uses `labels in (...)`: an issue matching any configured
+   label is selected. Use labels unique to this integration because the current
+   query does not also restrict a Jira project key.
+
+4. Validate discovery from the target repository:
+
+   ```bash
+   glab-helper
+   ```
+
+   A successful setup prints `Jira integration available` and shows
+   `Sync epics from Jira` and `Sync stories from Jira`. Press ESC to exit the
+   menu without making changes.
+
+Do not use `--dev` as a permanent setup shortcut. On the current Zsh `main`
+branch it skips the target-project guard and exposes destructive development
+commands. It is not required when `JIRA_TARGET_PROJECT` is configured correctly.
+
+The variable project acts as a secret store, not as a CI runtime; no pipeline,
+webhook, Jira application, or `.gitlab-ci.yml` is required. Users running the
+tool must be allowed to retrieve these variables through the GitLab API.
+Masking protects the token in logs but does not replace least-privilege access
+and token rotation.
 
 ### What gets synced
 
@@ -137,6 +200,25 @@ Team members need access to the glab-helper project to read the variables.
 | Subtasks | Checkboxes in issue description |
 | Labels | Labels (auto-created if missing) |
 | Priority | Label (e.g. `prio::medium`) |
+
+### Current limitations
+
+- One configuration set supports exactly one `JIRA_TARGET_PROJECT` at a time.
+  Changing it moves Jira availability from the old target to the new target.
+- Multiple targets require separate configuration projects (or variables in
+  each target project) and the matching `GLAB_HELPER_JIRA_PROJECT_PATH` value.
+  Automatic multi-project profiles are not implemented in the Zsh version.
+- One configuration set also represents one Jira URL, token, and label filter.
+- Selection is label-based across every Jira project visible to the token; no
+  `JIRA_PROJECT_KEY` constraint exists. Prefer a unique label and a
+  least-privilege Jira account.
+- Issue type names `Story` and `Epic`, plus the Epic Link field
+  `customfield_10000`, are currently hard-coded. Other Jira schemes require a
+  code change. Without that field, stories can lack milestone association.
+- Labels requiring quoting or custom JQL expressions are not configurable.
+- Jira Cloud and API v3 are not currently supported or tested.
+- Jira always remains read-only. The sync has no Jira write-back or
+  bidirectional conflict resolution.
 
 ## Dependencies
 
