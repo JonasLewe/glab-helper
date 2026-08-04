@@ -33,6 +33,7 @@ SCRIPT_DIR="${0:P:h}"
 # ─── CLI flags ───
 DEV_MODE=false
 DRY_RUN_MODE=false
+MAINTENANCE_MODE=false
 SCRIPT_FLAGS=()
 SHOW_HELP=false
 SHOW_VERSION=false
@@ -48,6 +49,10 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN_MODE=true
       shift
       ;;
+    --maintenance)
+      MAINTENANCE_MODE=true
+      shift
+      ;;
     --help|-h)
       SHOW_HELP=true
       shift
@@ -58,11 +63,16 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1" >&2
-      echo "Usage: glab-helper [--dev] [--dry-run] [--version]" >&2
+      echo "Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version]" >&2
       exit 2
       ;;
   esac
 done
+
+if $DEV_MODE && $MAINTENANCE_MODE; then
+  echo "--dev and --maintenance cannot be combined." >&2
+  exit 2
+fi
 
 $DEV_MODE && SCRIPT_FLAGS+=(--dev)
 $DRY_RUN_MODE && SCRIPT_FLAGS+=(--dry-run)
@@ -76,10 +86,11 @@ if $SHOW_HELP; then
   echo ""
   echo "  glab-helper — Interactive GitLab workflow helper"
   echo ""
-  echo "  Usage: glab-helper [--dev] [--dry-run] [--version]"
+  echo "  Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version]"
   echo ""
   echo "  Options:"
   echo "    --dev, -d   Show developer actions and skip the Jira target-project check"
+  echo "    --maintenance  Show scoped Jira-sync maintenance actions"
   echo "    --dry-run   Read-only mode; preview Jira syncs without any writes"
   echo "    --version   Show version and exit"
   echo ""
@@ -117,7 +128,7 @@ BOX_V="${BOX}│${RESET}"
 for lib_file in common transforms gitlab_api jira_api ui_helpers; do
   source "$SCRIPT_DIR/lib/${lib_file}.zsh" || exit 1
 done
-for flow_file in sync_epics sync_stories work_issue create_issue; do
+for flow_file in sync_epics sync_stories work_issue create_issue reset_jira_sync; do
   source "$SCRIPT_DIR/flows/${flow_file}.zsh" || exit 1
 done
 
@@ -217,11 +228,25 @@ else
 fi
 echo ""
 
+if $MAINTENANCE_MODE && ! $JIRA_AVAILABLE; then
+  echo "  ${RED}${ICON_WARN}${RESET} Maintenance mode requires the configured Jira target project."
+  echo ""
+  exit 1
+fi
+
 # ═══════════════════════════════════════════
 # MAIN MENU
 # ═══════════════════════════════════════════
 
-if $DRY_RUN_MODE; then
+if $MAINTENANCE_MODE; then
+  if $DRY_RUN_MODE; then
+    menu_options="${ICON_WARN} Preview Jira sync reset
+${ICON_EXIT} Exit"
+  else
+    menu_options="${ICON_WARN} Reset Jira sync data
+${ICON_EXIT} Exit"
+  fi
+elif $DRY_RUN_MODE; then
   if ! $JIRA_AVAILABLE; then
     echo "  ${YELLOW}${ICON_WARN}${RESET} No read-only Jira previews are available."
     echo ""
@@ -280,8 +305,14 @@ elif [[ "$action" == *"Exit"* ]]; then
   exit 0
 
 # ═════════════════════════════════════════════════════════════
-# PATH: WORK ON EXISTING ISSUE
+# PATH: RESET JIRA SYNC DATA
 # ═════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Jira sync reset"* || "$action" == *"Reset Jira sync data"* ]]; then
+  reset_jira_sync_data
+  exit $?
+
+# PATH: WORK ON EXISTING ISSUE
 
 elif [[ "$action" == *"Work on existing"* ]]; then
   work_on_existing_issue

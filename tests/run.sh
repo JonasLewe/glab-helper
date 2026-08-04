@@ -41,7 +41,7 @@ run_help_check() {
     fail "$name" "$output"
   fi
 
-  if [[ "$output" != *"Usage: glab-helper [--dev] [--dry-run] [--version]"* ]]; then
+  if [[ "$output" != *"Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version]"* ]]; then
     fail "$name" "$output"
   fi
 
@@ -169,6 +169,7 @@ EOF
     || "$(cat "$menu_capture")" != *"Create issue"* \
     || "$(cat "$menu_capture")" != *"Work on existing issue"* \
     || "$(cat "$menu_capture")" != *"Export GitLab snapshot"* \
+    || "$(cat "$menu_capture")" == *"Reset Jira sync data"* \
     || "$(cat "$menu_capture")" == *$'\n'"~ Sync Jira"* \
     || "$(tail -n 1 "$menu_capture")" != "× Exit" ]]; then
     fail "$name" "$output"
@@ -2232,6 +2233,7 @@ EOF
 }
 
 source "$ROOT_DIR/tests/p0_safety.sh"
+source "$ROOT_DIR/tests/maintenance_reset.sh"
 
 run_check "zsh-syntax" zsh -n "$ROOT_DIR/src/glab-helper" "$ROOT_DIR"/src/lib/*.zsh "$ROOT_DIR"/src/flows/*.zsh
 run_check "bash-syntax" bash -n "$ROOT_DIR/install.sh"
@@ -2247,6 +2249,7 @@ run_help_check "dev-help-smoke" "$ROOT_DIR/src/glab-helper" --dev --help
 run_help_check "dev-dry-run-help-smoke" "$ROOT_DIR/src/glab-helper" --dev --dry-run --help
 run_main_and_dev_menu_smoke
 run_dry_run_menu_read_only_smoke
+run_maintenance_menu_smoke
 run_jira_flow_smoke
 run_sync_epics_smoke
 run_snapshot_export_smoke
@@ -2274,5 +2277,8 @@ run_epic_failure_blocks_story_sync_smoke
 run_dry_run_write_barrier_smoke
 run_partial_failure_exit_code_smoke
 run_snapshot_read_failure_smoke
+run_maintenance_reset_dry_run_smoke
+run_maintenance_reset_apply_smoke
+run_maintenance_reset_failure_smoke
 
 printf 'All tests passed.\n'

@@ -32,6 +32,18 @@ EOF
     fail "$name" "$output"
   fi
 
+  set +e
+  output="$(
+    PATH="$stubdir:$PATH" \
+    COMMAND_LOG="$command_log" \
+    "$ROOT_DIR/src/glab-helper" --dev --maintenance 2>&1
+  )"
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 || "$output" != *"cannot be combined"* ]]; then
+    fail "$name" "$output"
+  fi
+
   if ! output="$(
     PATH="$stubdir:$PATH" \
     COMMAND_LOG="$command_log" \
