@@ -147,25 +147,36 @@ Before enabling the integration, verify that:
    Use the complete result, including any subgroup, as
    `JIRA_TARGET_PROJECT`.
 
-2. Choose a GitLab project to hold the Jira configuration. The current default
-   is `glab-helper`. A different project is selected with its URL-encoded
-   path:
+2. Choose a GitLab project to hold the Jira configuration. This can be the
+   target project itself or a dedicated configuration project. No repository
+   file is required. Tell `glab-helper` where the CI/CD variables live by using
+   the URL-encoded project path:
 
    ```bash
-   export GLAB_HELPER_JIRA_PROJECT_PATH='group%2Fglab-helper'
+   export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'
    ```
 
-   Encode every `/` as `%2F`. Put the export in your shell configuration if
-   this is the permanent configuration project.
+   Encode every `/` as `%2F`. For example,
+   `example-group/service-api` becomes
+   `example-group%2Fservice-api`.
+
+   To add the setting to Zsh permanently without creating duplicate lines,
+   replace the example path and run this once:
+
+   ```bash
+   setting="export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'"; rc_file="${ZDOTDIR:-$HOME}/.zshrc"; grep -Fqx "$setting" "$rc_file" 2>/dev/null || printf '\n%s\n' "$setting" >> "$rc_file"; source "$rc_file"
+   ```
+
+   If Bash is your login shell, use `~/.bashrc` instead of `~/.zshrc`.
 
 3. In that project's **Settings > CI/CD > Variables**, create:
 
    | Variable | Example | Masked? | Purpose |
    |---|---|---:|---|
    | `JIRA_URL` | `https://jira.company.com` | No | Base URL without a trailing slash |
-   | `JIRA_BOARD_LABELS` | `team-a,project-x` | No | Comma-separated Jira labels used by the JQL filter |
+   | `JIRA_BOARD_LABELS` | `release-v1` | No | Jira label identifying the items to synchronize |
    | `JIRA_TOKEN` | Personal Access Token | **Yes** | Read-only Jira Data Center Bearer token |
-   | `JIRA_TARGET_PROJECT` | `group/project-name` | No | Exact GitLab `path_with_namespace` allowed to sync |
+   | `JIRA_TARGET_PROJECT` | `example-group/service-api` | No | Exact GitLab `path_with_namespace` allowed to sync |
 
    The Jira query uses `labels in (...)`: an issue matching any configured
    label is selected. Use labels unique to this integration because the current
