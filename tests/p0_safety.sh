@@ -237,7 +237,7 @@ EOF
   chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
 
   for scenario in late invalid; do
-    printf '%s\n' '~ Sync stories from Jira' >"$responses_file"
+    printf '%s\n' '~ Sync Jira' >"$responses_file"
     : >"$command_log"
     set +e
     output="$(
@@ -380,7 +380,7 @@ run_epic_failure_blocks_story_sync_smoke() {
   mkdir -p "$stubdir"
   trap 'rm -rf "$tmpdir"' RETURN
 
-  printf '%s\n' '~ Sync stories from Jira' >"$responses_file"
+  printf '%s\n' '~ Sync Jira' >"$responses_file"
   write_clear_stub "$stubdir"
   write_fzf_stub "$stubdir"
 
@@ -446,7 +446,7 @@ EOF
     fail "$name" "Epic failure caused a mutation: $(cat "$command_log")"
   fi
 
-  printf '%s\n' '~ Preview story sync from Jira' >"$responses_file"
+  printf '%s\n' '~ Preview Jira' >"$responses_file"
   : >"$command_log"
   set +e
   output="$(
@@ -514,9 +514,9 @@ EOF
   chmod +x "$stubdir/clear" "$stubdir/fzf" "$stubdir/glab" "$stubdir/curl"
 
   for mode in plain dev; do
-    printf '%s\n' '~ Preview story sync from Jira' >"$responses_file"
     : >"$command_log"
     if [[ "$mode" == "dev" ]]; then
+      printf '%s\n' '~ Preview story sync from Jira' >"$responses_file"
       output="$(
         PATH="$stubdir:$PATH" TERM=xterm COMMAND_LOG="$command_log" \
         FZF_RESPONSES_FILE="$responses_file" \
@@ -524,6 +524,7 @@ EOF
       )"
       rc=$?
     else
+      printf '%s\n' '~ Preview Jira' >"$responses_file"
       output="$(
         PATH="$stubdir:$PATH" TERM=xterm COMMAND_LOG="$command_log" \
         FZF_RESPONSES_FILE="$responses_file" \
@@ -554,7 +555,7 @@ run_partial_failure_exit_code_smoke() {
   mkdir -p "$stubdir"
   trap 'rm -rf "$tmpdir"' RETURN
 
-  printf '%s\n' '~ Sync stories from Jira' >"$responses_file"
+  printf '%s\n' '~ Sync Jira' >"$responses_file"
   write_clear_stub "$stubdir"
   write_fzf_stub "$stubdir"
 
@@ -647,7 +648,7 @@ EOF
   output="$(
     cd "$workdir"
     PATH="$stubdir:$PATH" TERM=xterm FZF_RESPONSES_FILE="$responses_file" \
-      "$ROOT_DIR/src/glab-helper" 2>&1
+      "$ROOT_DIR/src/glab-helper" --dev 2>&1
   )"
   rc=$?
   set -e

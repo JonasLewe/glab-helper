@@ -76,7 +76,12 @@ offer_branch_creation() {
   if ! require_writes_allowed "fetch Git branches"; then
     return 1
   fi
-  git fetch origin --quiet 2>/dev/null
+  if ! git fetch --prune origin --quiet 2>/dev/null; then
+    echo "  ${RED}${ICON_WARN}${RESET} Could not refresh remote branches."
+    echo "  ${DIM}Base branch selection was aborted to avoid using stale data.${RESET}"
+    echo ""
+    return 1
+  fi
   if ! default_branch=$(get_default_branch); then
     echo "  ${RED}${ICON_WARN}${RESET} Could not determine the default branch."
     return 1

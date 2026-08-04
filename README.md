@@ -1,18 +1,17 @@
 # glab-helper
 
-Interactive GitLab workflow helper for the terminal. Create issues, pick up existing ones, and manage branches — all from a single fzf-driven TUI.
+Minimal terminal workflow for syncing Jira work into GitLab, picking up issues,
+and managing their branches from a focused fzf-driven TUI.
 
 ## Features
 
-- **Create issues from Jira** — sync User Stories from Jira Data Center to GitLab issues (one-way)
-- **Create issues manually** — title, labels, assignee, milestone, description (opens your editor)
-- **Bulk sync epics** — import all Jira Epics as GitLab Milestones in one go
-- **Bulk sync stories** — import all unsynced Jira User Stories as GitLab Issues (labels, priority, subtasks, milestone — no manual interaction)
+- **Sync Jira** — reconcile Jira Epics and User Stories into GitLab milestones and issues (one-way)
 - **Work on existing issues** — browse open issues, see which already have branches
-- **Branch management** — auto-generate branch names from issues, pick any base branch, checkout
+- **Branch management** — prune deleted remote branches, generate issue branch names, select a current base, and check out
+- **Forward-only status sync** — map Jira progress and review states to labels and close GitLab issues when Jira reaches Done
 - **Label & milestone creation** — create new labels and milestones inline, or auto-sync from Jira
 - **Jira markup conversion** — bold, italic, headings, ordered/unordered lists (nested), strikethrough, links, code blocks, monospace, and macro stripping converted to Markdown
-- **fzf everywhere** — fuzzy search for issues, labels, members, milestones, branches
+- **Developer tools** — granular Epic/Story sync, manual issue creation, and snapshot export behind `--dev`
 
 ## Install
 
@@ -64,27 +63,39 @@ Run from any cloned GitLab repo:
 glab-helper [--dev] [--dry-run] [--version]
 ```
 
-The `--dev` flag skips the Jira target-project check. It does not enable
-destructive maintenance commands.
+The `--dev` flag exposes advanced maintenance actions and skips the Jira
+target-project check. It does not expose project reset or other bulk-delete
+commands.
 
-The `--dry-run` flag makes the complete process read-only. Its menu contains
-only Jira epic and story previews; it never performs GitLab mutations, creates
-or checks out Git branches, or writes snapshots. It can be combined with
-`--dev`, but does not require it.
+The `--dry-run` flag makes the complete process read-only. The normal menu
+contains one combined `Preview Jira` action; `--dev --dry-run` exposes separate
+Epic and Story previews. Neither mode performs GitLab mutations, creates or
+checks out Git branches, or writes snapshots.
 
 `--help` and `--version` work offline. Unknown arguments are rejected instead
 of opening the normal menu.
 
-You'll be presented with the following options (Jira options only appear when integration is configured):
+With Jira configured, the normal menu deliberately contains only:
 
-### Create issue
+```text
+Sync Jira
+Work on existing issue
+```
 
-If Jira integration is configured, you can choose between:
+`Sync Jira` is first and therefore selected by default.
 
-- **From Jira** — select an unsynced Jira User Story. Title, description (converted to Markdown), labels, priority, milestone (from Epic), and subtasks (as checkboxes) are pre-filled. Review the description in your editor before creating.
-- **Manual** — walk through an interactive flow: title, labels (multi-select), assignee, milestone, description (opens nvim/vim).
+### Sync Jira
 
-After creation, optionally create a branch linked to the issue.
+This is the everyday one-way reconciliation from Jira into GitLab. It:
+
+- creates and updates GitLab milestones from Jira Epics;
+- creates missing GitLab issues from Jira User Stories;
+- updates synced titles, descriptions, Jira labels, priorities, milestones, and
+  forward-only workflow states;
+- closes a GitLab issue when its Jira Story reaches the Done category.
+
+It shows the complete plan and asks for confirmation before applying changes.
+Use `glab-helper --dry-run` for the same combined plan without writes.
 
 ### Work on existing issue
 
@@ -99,13 +110,20 @@ Browse all open issues with fzf. Issues that already have a branch are marked. A
 
 The menu loops after each action so you can make multiple changes in one session. Press ESC to exit.
 
-### Sync epics from Jira
+### Developer menu
 
-Bulk-imports all Jira Epics (filtered by board labels) as GitLab Milestones. Epic descriptions are converted to Markdown and added as milestone descriptions. Existing milestones are updated with the current Jira description (Jira is source of truth). Shows a dry-run preview with separate create/update counts before proceeding.
+Run `glab-helper --dev` only when a granular or administrative workflow is
+needed. It contains:
 
-### Sync stories from Jira
+- **Sync epics from Jira** — reconcile only Jira Epics and GitLab milestones;
+- **Sync stories from Jira** — run the full Story sync explicitly;
+- **Create issue** — create a GitLab issue from Jira with review or create one
+  manually;
+- **Work on existing issue** — the same daily issue workflow;
+- **Export GitLab snapshot** — manually export issues, labels, and milestones.
 
-Bulk-imports all unsynced Jira User Stories as GitLab Issues. Each issue gets the converted description, labels, priority label, subtasks as checkboxes, and milestone (from Epic). No assignee is set and no editor review — fully automatic. Missing milestones and labels are created on the fly, existing milestones are updated with epic descriptions. Shows a dry-run preview with confirmation.
+The normal `Sync Jira` action may still offer an optional pre-sync snapshot.
+Only the standalone export action is hidden from the normal menu.
 
 ## Sync safety
 
@@ -129,7 +147,9 @@ Bulk-imports all unsynced Jira User Stories as GitLab Issues. Each issue gets th
 When creating a branch, you can:
 
 - Edit the auto-generated name (format: `<issue-nr>-<slugified-title>`)
-- Pick any remote branch as base (sorted by most recent commit, default branch marked)
+- Pick any current remote branch as base (deleted remote branches are pruned
+  first; remaining branches are sorted by most recent commit and the default
+  is marked)
 - Optionally check out the new branch immediately
 
 ## Jira Integration (optional)
@@ -213,13 +233,13 @@ Before enabling the integration, verify that:
    glab-helper
    ```
 
-   A successful setup prints `Jira integration available` and shows
-   `Sync epics from Jira` and `Sync stories from Jira`. Press ESC to exit the
-   menu without making changes.
+   A successful setup prints `Jira integration available` and shows `Sync Jira`
+   as the first menu action. Press ESC to exit without making changes.
 
 Do not use `--dev` as a permanent setup shortcut. On the current Zsh `main`
-branch it skips the target-project guard and exposes destructive development
-commands. It is not required when `JIRA_TARGET_PROJECT` is configured correctly.
+branch it skips the target-project guard and exposes advanced GitLab write and
+maintenance actions. It is not required when `JIRA_TARGET_PROJECT` is
+configured correctly.
 
 The variable project acts as a secret store, not as a CI runtime; no pipeline,
 webhook, Jira application, or `.gitlab-ci.yml` is required. Users running the

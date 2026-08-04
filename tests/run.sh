@@ -85,8 +85,8 @@ printf '%s\n' "${STUB_EDITOR_CONTENT:?}" >"$file"
 EOF
 }
 
-run_preview_menu_hidden_by_default_smoke() {
-  local name="preview-menu-hidden-by-default-smoke"
+run_main_and_dev_menu_smoke() {
+  local name="main-and-dev-menu-smoke"
   local tmpdir stubdir menu_capture output
 
   tmpdir="$(mktemp -d)"
@@ -146,7 +146,26 @@ EOF
     fail "$name" "$output"
   fi
 
-  if [[ ! -f "$menu_capture" || "$(cat "$menu_capture")" == *"Preview story sync from Jira"* || "$(cat "$menu_capture")" != *"Sync stories from Jira"* ]]; then
+  if [[ ! -f "$menu_capture" \
+    || "$(cat "$menu_capture")" != $'~ Sync Jira\n▸ Work on existing issue' ]]; then
+    fail "$name" "$output"
+  fi
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_CAPTURE_FILE="$menu_capture" \
+    "$ROOT_DIR/src/glab-helper" --dev 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ "$(cat "$menu_capture")" != *"Sync epics from Jira"* \
+    || "$(cat "$menu_capture")" != *"Sync stories from Jira"* \
+    || "$(cat "$menu_capture")" != *"Create issue"* \
+    || "$(cat "$menu_capture")" != *"Work on existing issue"* \
+    || "$(cat "$menu_capture")" != *"Export GitLab snapshot"* \
+    || "$(cat "$menu_capture")" == *$'\n'"~ Sync Jira"* ]]; then
     fail "$name" "$output"
   fi
 
@@ -209,17 +228,28 @@ EOF
     PATH="$stubdir:$PATH" \
     TERM=xterm \
     FZF_CAPTURE_FILE="$menu_capture" \
+    "$ROOT_DIR/src/glab-helper" --dry-run 2>&1
+  )"; then
+    fail "$name" "$output"
+  fi
+
+  if [[ ! -f "$menu_capture" || "$(cat "$menu_capture")" != "~ Preview Jira" ]]; then
+    fail "$name" "$output"
+  fi
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_CAPTURE_FILE="$menu_capture" \
     "$ROOT_DIR/src/glab-helper" --dev --dry-run 2>&1
   )"; then
     fail "$name" "$output"
   fi
 
-  if [[ ! -f "$menu_capture" \
-    || "$(cat "$menu_capture")" != *"Preview story sync from Jira"* \
-    || "$(cat "$menu_capture")" != *"Preview epic sync from Jira"* \
-    || "$(cat "$menu_capture")" == *$'\n'"${ICON_SYNC:-~} Sync stories from Jira"* \
+  if [[ "$(cat "$menu_capture")" != $'~ Preview epic sync from Jira\n~ Preview story sync from Jira' \
     || "$(cat "$menu_capture")" == *"Create issue"* \
     || "$(cat "$menu_capture")" == *"Work on existing issue"* \
+    || "$(cat "$menu_capture")" == *"Export GitLab snapshot"* \
     || "$(cat "$menu_capture")" == *"Reset:"* ]]; then
     fail "$name" "$output"
   fi
@@ -336,7 +366,7 @@ EOF
     TERM=xterm \
     COMMAND_LOG="$command_log" \
     FZF_RESPONSES_FILE="$responses_file" \
-    "$ROOT_DIR/src/glab-helper" <<< $'\nn\n' 2>&1
+    "$ROOT_DIR/src/glab-helper" --dev <<< $'\nn\n' 2>&1
   )"; then
     fail "$name" "$output"
   fi
@@ -1202,7 +1232,7 @@ run_sync_stories_create_done_smoke() {
   trap 'rm -rf "$tmpdir"' RETURN
 
   cat >"$responses_file" <<'EOF'
-~ Sync stories from Jira
+~ Sync Jira
 EOF
 
   cat >"$stubdir/clear" <<'EOF'
@@ -1313,7 +1343,7 @@ run_sync_stories_update_status_forward_smoke() {
   trap 'rm -rf "$tmpdir"' RETURN
 
   cat >"$responses_file" <<'EOF'
-~ Sync stories from Jira
+~ Sync Jira
 EOF
 
   cat >"$stubdir/clear" <<'EOF'
@@ -1433,7 +1463,7 @@ run_sync_stories_update_status_done_smoke() {
   trap 'rm -rf "$tmpdir"' RETURN
 
   cat >"$responses_file" <<'EOF'
-~ Sync stories from Jira
+~ Sync Jira
 EOF
 
   cat >"$stubdir/clear" <<'EOF'
@@ -1554,7 +1584,7 @@ run_sync_stories_update_milestone_description_only_smoke() {
   trap 'rm -rf "$tmpdir"' RETURN
 
   cat >"$responses_file" <<'EOF'
-~ Sync stories from Jira
+~ Sync Jira
 EOF
 
   cat >"$stubdir/clear" <<'EOF'
@@ -1674,7 +1704,7 @@ run_sync_stories_update_title_only_smoke() {
   trap 'rm -rf "$tmpdir"' RETURN
 
   cat >"$responses_file" <<'EOF'
-~ Sync stories from Jira
+~ Sync Jira
 EOF
 
   cat >"$stubdir/clear" <<'EOF'
@@ -1794,7 +1824,7 @@ run_sync_stories_update_smoke() {
   trap 'rm -rf "$tmpdir"' RETURN
 
   cat >"$responses_file" <<'EOF'
-~ Sync stories from Jira
+~ Sync Jira
 EOF
 
   cat >"$stubdir/clear" <<'EOF'
@@ -1981,7 +2011,7 @@ EOF
     PATH="$stubdir:$PATH" \
     TERM=xterm \
     FZF_RESPONSES_FILE="$responses_file" \
-    "$ROOT_DIR/src/glab-helper" <<< $'y\n' 2>&1
+    "$ROOT_DIR/src/glab-helper" --dev <<< $'y\n' 2>&1
   )"; then
     fail "$name" "$output"
   fi
@@ -2053,7 +2083,7 @@ case "$*" in
   "show-ref --verify --quiet refs/heads/42-manual-issue-title")
     exit 1
     ;;
-  "fetch origin --quiet")
+  "fetch --prune origin --quiet")
     exit 0
     ;;
   "symbolic-ref refs/remotes/origin/HEAD")
@@ -2086,7 +2116,7 @@ EOF
     TERM=xterm \
     STUB_EDITOR_CONTENT=$'## Ready for implementation\n\n- [ ] first check' \
     FZF_RESPONSES_FILE="$responses_file" \
-    "$ROOT_DIR/src/glab-helper" <<< $'Manual issue title\n\ny\ny\n\ny\n' 2>&1
+    "$ROOT_DIR/src/glab-helper" --dev <<< $'Manual issue title\n\ny\ny\n\ny\n' 2>&1
   )"; then
     fail "$name" "$output"
   fi
@@ -2151,7 +2181,7 @@ EOF
 set -euo pipefail
 
 case "$*" in
-  "fetch origin --quiet")
+  "fetch --prune origin --quiet")
     exit 0
     ;;
   "branch -r")
@@ -2200,7 +2230,7 @@ fi
 run_help_check "help-smoke" "$ROOT_DIR/src/glab-helper" --help
 run_help_check "dev-help-smoke" "$ROOT_DIR/src/glab-helper" --dev --help
 run_help_check "dev-dry-run-help-smoke" "$ROOT_DIR/src/glab-helper" --dev --dry-run --help
-run_preview_menu_hidden_by_default_smoke
+run_main_and_dev_menu_smoke
 run_dry_run_menu_read_only_smoke
 run_jira_flow_smoke
 run_sync_epics_smoke

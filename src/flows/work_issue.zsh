@@ -15,9 +15,16 @@ work_on_existing_issue() {
   fi
   issue_count=$(jq 'length' <<< "$issues_json")
 
-  # Fetch remote branches (also check local branches)
-  require_writes_allowed "fetch Git branches" && git fetch origin --quiet 2>/dev/null
-  remote_branches=$(git branch -r 2>/dev/null | grep -v 'HEAD' | sed 's|^ *origin/||' | sed 's|^ *||')
+  # Prune deleted remote-tracking refs before checking branch associations.
+  remote_branches=""
+  if require_writes_allowed "fetch Git branches" \
+    && git fetch --prune origin --quiet 2>/dev/null; then
+    remote_branches=$(git branch -r 2>/dev/null | grep -v 'HEAD' | sed 's|^ *origin/||' | sed 's|^ *||')
+  else
+    printf "\r                                        \r"
+    echo "  ${YELLOW}${ICON_WARN}${RESET} Remote branches could not be refreshed; showing local branch associations only."
+    echo -n "  ${DIM}Fetching issues and branches...${RESET}"
+  fi
   local_branches=$(git branch 2>/dev/null | sed 's|^[* ] ||')
   all_branches=$(printf '%s\n%s' "$remote_branches" "$local_branches" | sort -u)
 
