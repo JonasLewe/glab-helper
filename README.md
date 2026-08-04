@@ -80,9 +80,11 @@ With Jira configured, the normal menu deliberately contains only:
 ```text
 Sync Jira
 Work on existing issue
+Exit
 ```
 
-`Sync Jira` is first and therefore selected by default.
+`Sync Jira` is first and therefore selected by default. `Exit` is always the
+last action, including in developer and dry-run menus.
 
 ### Sync Jira
 

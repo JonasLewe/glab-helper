@@ -105,6 +105,10 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 cat >"${FZF_CAPTURE_FILE:?}"
+if [[ "${FZF_SELECT_EXIT:-}" == "1" ]]; then
+  printf '%s\n' '× Exit'
+  exit 0
+fi
 exit 1
 EOF
 
@@ -147,7 +151,7 @@ EOF
   fi
 
   if [[ ! -f "$menu_capture" \
-    || "$(cat "$menu_capture")" != $'~ Sync Jira\n▸ Work on existing issue' ]]; then
+    || "$(cat "$menu_capture")" != $'~ Sync Jira\n▸ Work on existing issue\n× Exit' ]]; then
     fail "$name" "$output"
   fi
 
@@ -165,7 +169,18 @@ EOF
     || "$(cat "$menu_capture")" != *"Create issue"* \
     || "$(cat "$menu_capture")" != *"Work on existing issue"* \
     || "$(cat "$menu_capture")" != *"Export GitLab snapshot"* \
-    || "$(cat "$menu_capture")" == *$'\n'"~ Sync Jira"* ]]; then
+    || "$(cat "$menu_capture")" == *$'\n'"~ Sync Jira"* \
+    || "$(tail -n 1 "$menu_capture")" != "× Exit" ]]; then
+    fail "$name" "$output"
+  fi
+
+  if ! output="$(
+    PATH="$stubdir:$PATH" \
+    TERM=xterm \
+    FZF_CAPTURE_FILE="$menu_capture" \
+    FZF_SELECT_EXIT=1 \
+    "$ROOT_DIR/src/glab-helper" 2>&1
+  )" || [[ "$output" != *"Done."* ]]; then
     fail "$name" "$output"
   fi
 
@@ -233,7 +248,7 @@ EOF
     fail "$name" "$output"
   fi
 
-  if [[ ! -f "$menu_capture" || "$(cat "$menu_capture")" != "~ Preview Jira" ]]; then
+  if [[ ! -f "$menu_capture" || "$(cat "$menu_capture")" != $'~ Preview Jira\n× Exit' ]]; then
     fail "$name" "$output"
   fi
 
@@ -246,7 +261,7 @@ EOF
     fail "$name" "$output"
   fi
 
-  if [[ "$(cat "$menu_capture")" != $'~ Preview epic sync from Jira\n~ Preview story sync from Jira' \
+  if [[ "$(cat "$menu_capture")" != $'~ Preview epic sync from Jira\n~ Preview story sync from Jira\n× Exit' \
     || "$(cat "$menu_capture")" == *"Create issue"* \
     || "$(cat "$menu_capture")" == *"Work on existing issue"* \
     || "$(cat "$menu_capture")" == *"Export GitLab snapshot"* \

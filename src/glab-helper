@@ -109,6 +109,7 @@ ICON_DESC="¶"
 ICON_NEW="+"
 ICON_BRANCH="⎇"
 ICON_SYNC="~"
+ICON_EXIT="×"
 
 BOX="${CYAN}${BOLD}"
 BOX_V="${BOX}│${RESET}"
@@ -228,14 +229,17 @@ if $DRY_RUN_MODE; then
   fi
   if $DEV_MODE; then
     menu_options="${ICON_SYNC} Preview epic sync from Jira
-${ICON_SYNC} Preview story sync from Jira"
+${ICON_SYNC} Preview story sync from Jira
+${ICON_EXIT} Exit"
   else
-    menu_options="${ICON_SYNC} Preview Jira"
+    menu_options="${ICON_SYNC} Preview Jira
+${ICON_EXIT} Exit"
   fi
 elif $DEV_MODE; then
   menu_options="${ICON_NEW} Create issue
 ${ICON_TITLE} Work on existing issue
-${ICON_TITLE} Export GitLab snapshot"
+${ICON_TITLE} Export GitLab snapshot
+${ICON_EXIT} Exit"
   if $JIRA_AVAILABLE; then
     menu_options="${ICON_SYNC} Sync epics from Jira
 ${ICON_SYNC} Sync stories from Jira
@@ -244,9 +248,11 @@ ${menu_options}"
 else
   if $JIRA_AVAILABLE; then
     menu_options="${ICON_SYNC} Sync Jira
-${ICON_TITLE} Work on existing issue"
+${ICON_TITLE} Work on existing issue
+${ICON_EXIT} Exit"
   else
-    menu_options="${ICON_TITLE} Work on existing issue"
+    menu_options="${ICON_TITLE} Work on existing issue
+${ICON_EXIT} Exit"
   fi
 fi
 
@@ -266,8 +272,16 @@ if [[ -z "$action" ]]; then
   exit 0
 
 # ═══════════════════════════════════════════════════════════════
-# PATH: WORK ON EXISTING ISSUE
+# PATH: EXIT
 # ═══════════════════════════════════════════════════════════════
+
+elif [[ "$action" == *"Exit"* ]]; then
+  echo "  ${DIM}Done.${RESET}"
+  exit 0
+
+# ═════════════════════════════════════════════════════════════
+# PATH: WORK ON EXISTING ISSUE
+# ═════════════════════════════════════════════════════════════
 
 elif [[ "$action" == *"Work on existing"* ]]; then
   work_on_existing_issue
