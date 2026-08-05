@@ -13,10 +13,12 @@ func TestOfflineCLI(t *testing.T) {
 		code int
 		want string
 	}{
-		{name: "help", args: []string{"--help"}, want: "Usage: glab-helper"},
-		{name: "version", args: []string{"--version"}, want: "glab-helper 0.1.0"},
+		{name: "help", args: []string{"--dev", "--dry-run", "--help"}, want: "Usage: glab-helper"},
+		{name: "version", args: []string{"--dry-run", "--version"}, want: "glab-helper 0.1.0"},
 		{name: "interactive not migrated", code: 2, want: "not migrated yet"},
-		{name: "unknown argument", args: []string{"--unknown"}, code: 2, want: "Unknown argument"},
+		{name: "valid mode not migrated", args: []string{"--maintenance", "--dry-run"}, code: 2, want: "not migrated yet"},
+		{name: "conflicting modes", args: []string{"--dev", "--maintenance", "--help"}, code: 2, want: "cannot be combined"},
+		{name: "unknown argument", args: []string{"--version", "--unknown"}, code: 2, want: "Unknown argument"},
 	}
 
 	for _, test := range tests {
