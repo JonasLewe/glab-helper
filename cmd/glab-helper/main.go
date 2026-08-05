@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/JonasLewe/glab-helper/internal/gitlab"
 )
 
 const version = "0.1.0"
@@ -64,6 +67,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	fmt.Fprintln(stderr, "Interactive workflow not migrated yet; use the Zsh glab-helper.")
+	project, err := gitlab.CurrentProject(context.Background())
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot detect the current GitLab project: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; use the Zsh glab-helper.\n", project.Path)
 	return 2
 }

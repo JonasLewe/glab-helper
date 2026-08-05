@@ -15,8 +15,6 @@ func TestOfflineCLI(t *testing.T) {
 	}{
 		{name: "help", args: []string{"--dev", "--dry-run", "--help"}, want: "Usage: glab-helper"},
 		{name: "version", args: []string{"--dry-run", "--version"}, want: "glab-helper 0.1.0"},
-		{name: "interactive not migrated", code: 2, want: "not migrated yet"},
-		{name: "valid mode not migrated", args: []string{"--maintenance", "--dry-run"}, code: 2, want: "not migrated yet"},
 		{name: "conflicting modes", args: []string{"--dev", "--maintenance", "--help"}, code: 2, want: "cannot be combined"},
 		{name: "unknown argument", args: []string{"--version", "--unknown"}, code: 2, want: "Unknown argument"},
 	}

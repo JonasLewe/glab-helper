@@ -40,8 +40,9 @@ go run ./cmd/glab-helper --help
 go run ./cmd/glab-helper --version
 ```
 
-No interactive, Git, Jira, or GitLab operation is reachable through the Go
-binary yet.
+Without an offline flag, the development binary only validates the current
+GitLab project and then stops. Issue, branch, Jira, and mutation workflows still
+use the Zsh implementation.
 
 Make sure `~/.local/bin` is in your PATH:
 
