@@ -25,6 +25,19 @@ cd ~/.local/share/glab-helper
 
 This installs runtime dependencies (`zsh`, `glab`, `fzf 0.35+`, `jq`, `curl`) and symlinks `glab-helper` to `~/.local/bin/`.
 
+### Go migration
+
+The production command remains the Zsh implementation. The first migration
+step provides only the existing offline help and version commands:
+
+```bash
+go run ./cmd/glab-helper --help
+go run ./cmd/glab-helper --version
+```
+
+No interactive, Git, Jira, or GitLab operation is reachable through the Go
+binary yet.
+
 Make sure `~/.local/bin` is in your PATH:
 
 ```bash
