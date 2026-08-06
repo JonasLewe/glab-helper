@@ -68,13 +68,21 @@ and do not copy the Jira token to your machine**. Ask the project maintainer for
 - the GitLab project that stores the four Jira CI/CD variables;
 - access to read those variables and to work with issues in the target project.
 
-From the cloned target repository, authenticate `glab` and point the helper to
-the configuration project. Encode every `/` in its path as `%2F`:
+From a clone of the configuration project, authenticate `glab` and derive the
+exact URL-encoded path directly from GitLab:
+
+```bash
+cd /path/to/config-project
+glab auth status
+export GLAB_HELPER_JIRA_PROJECT_PATH="$(glab repo view --output json | jq -r '.path_with_namespace | @uri')"
+printf '%s\n' "$GLAB_HELPER_JIRA_PROJECT_PATH"
+```
+
+Then run the helper from the target project. If both are the same project, stay
+in the current directory:
 
 ```bash
 cd /path/to/target-project
-glab auth status
-export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'
 glab-helper
 ```
 
