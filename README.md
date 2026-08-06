@@ -73,6 +73,47 @@ glab auth status
 
 This should show your GitLab instance and username. The token is stored locally by glab and used by glab-helper automatically.
 
+## Use an existing Jira setup
+
+Jira sync is the primary workflow of `glab-helper`. Jira is technically not
+required to work on an existing GitLab issue or branch, but without it the
+normal menu has no sync action and maintenance mode is unavailable.
+
+If your team already configured Jira, **do not create the CI/CD variables again
+and do not copy the Jira token to your machine**. Ask the project maintainer for:
+
+- the target GitLab repository;
+- the GitLab project that stores the four Jira CI/CD variables;
+- access to read those variables and to work with issues in the target project.
+
+From the cloned target repository, authenticate `glab` and point the helper to
+the configuration project. Encode every `/` in its path as `%2F`:
+
+```bash
+cd /path/to/target-project
+glab auth status
+export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'
+glab-helper
+```
+
+This local setting is required by the current Zsh version even when the
+configuration variables are stored in the target project itself. It identifies
+where the variables live; their values, including `JIRA_TOKEN`, are retrieved
+through `glab` and are not added to your shell configuration.
+
+A working setup prints `Jira integration available` and shows `Sync Jira` as
+the first action. To keep the configuration-project path across Zsh sessions,
+replace the example and run this once:
+
+```bash
+setting="export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'"; rc_file="${ZDOTDIR:-$HOME}/.zshrc"; grep -Fqx "$setting" "$rc_file" 2>/dev/null || printf '\n%s\n' "$setting" >> "$rc_file"; source "$rc_file"
+```
+
+For Bash, put the same export in `~/.bashrc`. If Jira is not detected, verify
+the encoded project path and ask a maintainer whether your GitLab account may
+retrieve the project's CI/CD variable values through the API. Do not use
+`--dev` to bypass this setup.
+
 ## Usage
 
 Run from any cloned GitLab repo:
@@ -205,7 +246,10 @@ When creating a branch, you can:
   is marked)
 - Optionally check out the new branch immediately
 
-## Jira Integration (optional)
+## Jira administration
+
+Most users do not need this section. It is for the maintainer who connects a
+GitLab target project to Jira for the first time.
 
 Jira integration is deliberately one-way:
 
@@ -219,7 +263,7 @@ or token with read-only access. Normal syncs can create or update GitLab issues,
 labels, and milestones, but always show a preview and ask for confirmation
 first.
 
-### Prerequisites
+### Prerequisites for first-time setup
 
 Before enabling the integration, verify that:
 
@@ -234,7 +278,7 @@ Before enabling the integration, verify that:
 - the GitLab identity can read the configuration project's CI/CD variables and
   can create or update issues, labels, and milestones in the target project.
 
-### Setup
+### First-time setup
 
 1. From the cloned target repository, determine its exact GitLab path:
 
@@ -247,8 +291,7 @@ Before enabling the integration, verify that:
 
 2. Choose a GitLab project to hold the Jira configuration. This can be the
    target project itself or a dedicated configuration project. No repository
-   file is required. Tell `glab-helper` where the CI/CD variables live by using
-   the URL-encoded project path:
+   file is required. Record its URL-encoded path for every user:
 
    ```bash
    export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'
@@ -258,14 +301,10 @@ Before enabling the integration, verify that:
    `example-group/service-api` becomes
    `example-group%2Fservice-api`.
 
-   To add the setting to Zsh permanently without creating duplicate lines,
-   replace the example path and run this once:
-
-   ```bash
-   setting="export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'"; rc_file="${ZDOTDIR:-$HOME}/.zshrc"; grep -Fqx "$setting" "$rc_file" 2>/dev/null || printf '\n%s\n' "$setting" >> "$rc_file"; source "$rc_file"
-   ```
-
-   If Bash is your login shell, use `~/.bashrc` instead of `~/.zshrc`.
+   The helper does not discover this project automatically. Give intended
+   users sufficient access to retrieve its CI/CD variable values, then share
+   the encoded path with them. The preceding user section explains their only
+   required local setting.
 
 3. In that project's **Settings > CI/CD > Variables**, create:
 
@@ -290,15 +329,17 @@ Before enabling the integration, verify that:
    as the first menu action. Press ESC to exit without making changes.
 
 Do not use `--dev` as a permanent setup shortcut. On the current Zsh `main`
-branch it skips the target-project guard and exposes advanced GitLab write and
-maintenance actions. It is not required when `JIRA_TARGET_PROJECT` is
-configured correctly.
+branch it skips the target-project guard and exposes advanced GitLab write
+actions; it does not configure Jira. It is not required when
+`JIRA_TARGET_PROJECT` is configured correctly.
 
 The variable project acts as a secret store, not as a CI runtime; no pipeline,
 webhook, Jira application, or `.gitlab-ci.yml` is required. Users running the
 tool must be allowed to retrieve these variables through the GitLab API.
-Masking protects the token in logs but does not replace least-privilege access
-and token rotation.
+GitLab generally reserves project CI/CD variable management for Maintainers;
+instance permissions and custom roles can further restrict API access. Masking
+protects the token in logs but does not replace least-privilege access and token
+rotation.
 
 ### What gets synced
 
