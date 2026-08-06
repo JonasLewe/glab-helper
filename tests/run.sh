@@ -120,16 +120,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   *)
@@ -219,16 +219,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   *)
@@ -322,16 +322,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=opened&per_page=100&page=1")
@@ -443,16 +443,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?per_page=100&page=1")
@@ -542,16 +542,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -647,16 +647,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -752,16 +752,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -857,16 +857,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -962,16 +962,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1067,16 +1067,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1172,16 +1172,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1277,16 +1277,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1388,16 +1388,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1508,16 +1508,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1629,16 +1629,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1749,16 +1749,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1869,16 +1869,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
@@ -1978,16 +1978,16 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL")
+  "api projects/group%2Fproject/variables/JIRA_URL")
     printf '%s\n' '{"value":"https://jira.example.com"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS")
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS")
     printf '%s\n' '{"value":"team-a"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN")
+  "api projects/group%2Fproject/variables/JIRA_TOKEN")
     printf '%s\n' '{"value":"token"}'
     ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
   "api projects/1/milestones?state=active&per_page=100&page=1")
@@ -2069,7 +2069,7 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  api\ projects/ibm%2Fglab-helper/variables/*)
+  api\ projects/group%2Fproject/variables/*)
     exit 1
     ;;
   "api projects/1/labels?per_page=100&page=1")
@@ -2173,7 +2173,7 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"path_with_namespace":"group/project","id":1}'
     ;;
-  api\ projects/ibm%2Fglab-helper/variables/*)
+  api\ projects/group%2Fproject/variables/*)
     exit 1
     ;;
   "api projects/1/issues?state=opened&per_page=100&page=1")

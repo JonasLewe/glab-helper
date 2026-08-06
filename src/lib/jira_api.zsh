@@ -1,11 +1,15 @@
 # Jira configuration and fetch helpers.
 
-JIRA_PROJECT_PATH="${GLAB_HELPER_JIRA_PROJECT_PATH:-ibm%2Fglab-helper}"
+JIRA_PROJECT_PATH="${GLAB_HELPER_JIRA_PROJECT_PATH:-}"
 JIRA_AVAILABLE=false
 
 load_jira_config() {
   local var_url var_labels var_token var_target
   local variable_schema='type == "object" and (.value | type == "string") and (.value | length > 0)'
+
+  if [[ -z "$JIRA_PROJECT_PATH" ]]; then
+    JIRA_PROJECT_PATH="${repo_name//\//%2F}"
+  fi
 
   if ! var_url=$(glab api "projects/${JIRA_PROJECT_PATH}/variables/JIRA_URL" 2>/dev/null) \
     || ! jq -e "$variable_schema" <<< "$var_url" &>/dev/null; then

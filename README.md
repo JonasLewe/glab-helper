@@ -68,12 +68,20 @@ and do not copy the Jira token to your machine**. Ask the project maintainer for
 - the GitLab project that stores the four Jira CI/CD variables;
 - access to read those variables and to work with issues in the target project.
 
-From a clone of the configuration project, authenticate `glab` and derive the
-exact URL-encoded path directly from GitLab:
+If the variables are stored in the target project, no local Jira setting is
+needed. The helper uses the current GitLab project by default:
+
+```bash
+cd /path/to/target-project
+glab auth status
+glab-helper
+```
+
+If the variables are stored in a separate configuration project, derive its
+exact URL-encoded path from a clone of that project:
 
 ```bash
 cd /path/to/config-project
-glab auth status
 export GLAB_HELPER_JIRA_PROJECT_PATH="$(glab repo view --output json | jq -r '.path_with_namespace | @uri')"
 printf '%s\n' "$GLAB_HELPER_JIRA_PROJECT_PATH"
 ```
@@ -85,18 +93,16 @@ configuration project:
 setting="export GLAB_HELPER_JIRA_PROJECT_PATH='$(glab repo view --output json | jq -r '.path_with_namespace | @uri')'"; rc_file="${ZDOTDIR:-$HOME}/.zshrc"; grep -Fqx "$setting" "$rc_file" 2>/dev/null || printf '\n%s\n' "$setting" >> "$rc_file"; source "$rc_file"
 ```
 
-Then run the helper from the target project. If both are the same project, stay
-in the current directory:
+Then run the helper from the target project:
 
 ```bash
 cd /path/to/target-project
 glab-helper
 ```
 
-This local setting is required by the current Zsh version even when the
-configuration variables are stored in the target project itself. It identifies
-where the variables live; their values, including `JIRA_TOKEN`, are retrieved
-through `glab` and are not added to your shell configuration.
+The local setting identifies only where the variables live. Their values,
+including `JIRA_TOKEN`, are retrieved through `glab` and are not added to your
+shell configuration.
 
 A working setup prints `Jira integration available` and shows `Sync Jira` as
 the first action. For Bash, put the same resolved export in `~/.bashrc`. If Jira
@@ -291,7 +297,8 @@ Before enabling the integration, verify that:
    `example-group/service-api` becomes
    `example-group%2Fservice-api`.
 
-   The helper does not discover this project automatically. Give intended
+   The helper uses the current target project by default. It cannot discover a
+   different configuration project automatically. In that case, give intended
    users sufficient access to retrieve its CI/CD variable values, then share
    the encoded path with them. The preceding user section explains their only
    required local setting.
