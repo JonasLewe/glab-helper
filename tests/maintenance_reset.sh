@@ -22,10 +22,10 @@ EOF
 set -euo pipefail
 case "$*" in
   "repo view --output json") printf '%s\n' '{"path_with_namespace":"group/project","id":1}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL") printf '%s\n' '{"value":"https://jira.example.com"}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS") printf '%s\n' '{"value":"team-a"}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN") printf '%s\n' '{"value":"token"}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT")
+  "api projects/group%2Fproject/variables/JIRA_URL") printf '%s\n' '{"value":"https://jira.example.com"}' ;;
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS") printf '%s\n' '{"value":"team-a"}' ;;
+  "api projects/group%2Fproject/variables/JIRA_TOKEN") printf '%s\n' '{"value":"token"}' ;;
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT")
     printf '{"value":"%s"}\n' "${TARGET_PROJECT:-group/project}"
     ;;
   *) printf 'unexpected glab invocation: %s\n' "$*" >&2; exit 1 ;;
@@ -97,10 +97,10 @@ milestones='[
 
 case "$*" in
   "repo view --output json") printf '%s\n' '{"path_with_namespace":"group/project","id":1}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_URL") printf '%s\n' '{"value":"https://jira.example.com"}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_BOARD_LABELS") printf '%s\n' '{"value":"team-a"}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TOKEN") printf '%s\n' '{"value":"token"}' ;;
-  "api projects/ibm%2Fglab-helper/variables/JIRA_TARGET_PROJECT") printf '%s\n' '{"value":"group/project"}' ;;
+  "api projects/group%2Fproject/variables/JIRA_URL") printf '%s\n' '{"value":"https://jira.example.com"}' ;;
+  "api projects/group%2Fproject/variables/JIRA_BOARD_LABELS") printf '%s\n' '{"value":"team-a"}' ;;
+  "api projects/group%2Fproject/variables/JIRA_TOKEN") printf '%s\n' '{"value":"token"}' ;;
+  "api projects/group%2Fproject/variables/JIRA_TARGET_PROJECT") printf '%s\n' '{"value":"group/project"}' ;;
   "api projects/1/issues?state=all&per_page=100&page=1")
     if [[ "${RESET_SCENARIO:-success}" == "plan-change" \
       && "$(grep -cF 'api projects/1/issues?state=all&per_page=100&page=1' "${COMMAND_LOG:?}")" -gt 1 ]]; then
