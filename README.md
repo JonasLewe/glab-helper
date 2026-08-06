@@ -78,6 +78,13 @@ export GLAB_HELPER_JIRA_PROJECT_PATH="$(glab repo view --output json | jq -r '.p
 printf '%s\n' "$GLAB_HELPER_JIRA_PROJECT_PATH"
 ```
 
+To keep that value across Zsh sessions, run this once before leaving the
+configuration project:
+
+```bash
+setting="export GLAB_HELPER_JIRA_PROJECT_PATH='$(glab repo view --output json | jq -r '.path_with_namespace | @uri')'"; rc_file="${ZDOTDIR:-$HOME}/.zshrc"; grep -Fqx "$setting" "$rc_file" 2>/dev/null || printf '\n%s\n' "$setting" >> "$rc_file"; source "$rc_file"
+```
+
 Then run the helper from the target project. If both are the same project, stay
 in the current directory:
 
@@ -92,17 +99,10 @@ where the variables live; their values, including `JIRA_TOKEN`, are retrieved
 through `glab` and are not added to your shell configuration.
 
 A working setup prints `Jira integration available` and shows `Sync Jira` as
-the first action. To keep the configuration-project path across Zsh sessions,
-replace the example and run this once:
-
-```bash
-setting="export GLAB_HELPER_JIRA_PROJECT_PATH='example-group%2Fconfig-project'"; rc_file="${ZDOTDIR:-$HOME}/.zshrc"; grep -Fqx "$setting" "$rc_file" 2>/dev/null || printf '\n%s\n' "$setting" >> "$rc_file"; source "$rc_file"
-```
-
-For Bash, put the same export in `~/.bashrc`. If Jira is not detected, verify
-the encoded project path and ask a maintainer whether your GitLab account may
-retrieve the project's CI/CD variable values through the API. Do not use
-`--dev` to bypass this setup.
+the first action. For Bash, put the same resolved export in `~/.bashrc`. If Jira
+is not detected, verify the encoded project path and ask a maintainer whether
+your GitLab account may retrieve the project's CI/CD variable values through
+the API. Do not use `--dev` to bypass this setup.
 
 ## Usage
 
