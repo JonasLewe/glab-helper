@@ -1,5 +1,10 @@
 # glab-helper
 
+> [!WARNING]
+> **The `v2` branch is work in progress.** Use `main` for the stable Zsh
+> version; the Go migration is intentionally incomplete and not ready for daily
+> use.
+
 Minimal terminal workflow for syncing Jira work into GitLab, picking up issues,
 and managing their branches from a focused fzf-driven TUI.
 
