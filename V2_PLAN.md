@@ -36,7 +36,7 @@ the stable Zsh release until the final cutover.
   provider-neutral source snapshot.
 - [x] 10 — Preview the combined milestone/issue/task synchronization without
   writes.
-- [ ] 11 — Confirm and apply the sync plan; keep YouTrack read-only.
+- [x] 11 — Confirm and apply the sync plan; keep YouTrack read-only.
 - [ ] 12 — List and select an existing issue or task without mutations.
 - [ ] 13 — Migrate branch pruning, creation, and checkout for issues and tasks.
 - [ ] 14 — Migrate the remaining issue-edit actions.

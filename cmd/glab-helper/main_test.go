@@ -30,7 +30,7 @@ func TestOfflineCLI(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			if code := run(test.args, &stdout, &stderr); code != test.code {
+			if code := run(test.args, strings.NewReader(""), &stdout, &stderr); code != test.code {
 				t.Fatalf("exit code = %d, want %d", code, test.code)
 			}
 			if output := stdout.String() + stderr.String(); !strings.Contains(output, test.want) {
@@ -68,6 +68,13 @@ if [ "$1 $2" = "api graphql" ]; then
   printf '%s\n' '{"data":{"namespace":{"workItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
   exit 0
 fi
+case "$*" in
+  "api projects/42/milestones -X POST"*)
+    printf '%s\n' 'api create milestone' >>"$COMMAND_LOG"
+    printf '%s\n' '{"id":10,"title":"New Platform","description":"Epic details","state":"active"}'
+    exit 0
+    ;;
+esac
 printf '%s\n' "$*" >>"$COMMAND_LOG"
 case "$*" in
   "repo view --output json")
@@ -126,22 +133,39 @@ esac
 		youTrackUnavailable  bool
 		projectConfigMissing bool
 		youTrackReadFails    bool
+		snapshot             source.Snapshot
+		input                string
 		code                 int
 		wantOutput           string
 		wantCommandSuffix    string
 	}{
 		{
 			name:              "YouTrack config available",
-			code:              2,
-			wantOutput:        "read 0 YouTrack work items into memory",
-			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + projectReadCommands,
+			code:              0,
+			wantOutput:        "No GitLab changes are needed",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + gitLabSnapshotCommands,
 		},
 		{
 			name:              "read-only combined preview",
 			args:              []string{"--dry-run"},
 			code:              0,
-			wantOutput:        "No GitLab or YouTrack changes were applied",
+			wantOutput:        "no GitLab or YouTrack changes have been applied",
 			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + gitLabSnapshotCommands,
+		},
+		{
+			name:              "apply requires explicit confirmation",
+			snapshot:          source.Snapshot{WorkItems: []source.WorkItem{{ID: "APP-1", Title: "New Platform", Description: "Epic details", Kind: "Epic", Role: "epic"}}},
+			code:              0,
+			wantOutput:        "Synchronization cancelled",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + gitLabSnapshotCommands,
+		},
+		{
+			name:              "confirmed plan is applied",
+			snapshot:          source.Snapshot{WorkItems: []source.WorkItem{{ID: "APP-1", Title: "New Platform", Description: "Epic details", Kind: "Epic", Role: "epic"}}},
+			input:             "yes\n",
+			code:              0,
+			wantOutput:        "Applied 1 GitLab synchronization actions",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + gitLabSnapshotCommands + "api create milestone\n",
 		},
 		{
 			name:                "YouTrack config optional",
@@ -183,6 +207,9 @@ esac
 				if test.youTrackReadFails {
 					return source.Snapshot{}, errors.New("later page failed")
 				}
+				if test.snapshot.WorkItems != nil {
+					return test.snapshot, nil
+				}
 				return source.Snapshot{WorkItems: []source.WorkItem{}}, nil
 			}
 			defer func() { readYouTrackSnapshot = previousReadYouTrackSnapshot }()
@@ -203,7 +230,7 @@ esac
 			}
 
 			var stdout, stderr bytes.Buffer
-			if code := run(test.args, &stdout, &stderr); code != test.code {
+			if code := run(test.args, strings.NewReader(test.input), &stdout, &stderr); code != test.code {
 				t.Fatalf("exit code = %d, want %d; stderr: %s", code, test.code, stderr.String())
 			}
 			if output := stdout.String() + stderr.String(); !strings.Contains(output, test.wantOutput) {

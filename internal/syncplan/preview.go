@@ -22,7 +22,7 @@ func WritePreview(writer io.Writer, projectPath string, plan Plan) {
 		writeAction(writer, action)
 	}
 	fmt.Fprintf(writer, "Summary: %d to create, %d to update, %d unchanged, %d ignored source items.\n", creates, updates, plan.Unchanged, plan.Ignored)
-	fmt.Fprintln(writer, "No GitLab or YouTrack changes were applied.")
+	fmt.Fprintln(writer, "Preview complete; no GitLab or YouTrack changes have been applied.")
 }
 
 func writeAction(writer io.Writer, action Action) {

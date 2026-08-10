@@ -27,7 +27,7 @@ func TestWritePreviewIsReadOnlyAndShowsRelationships(t *testing.T) {
 		"description: changed",
 		`state: "opened" -> "closed"`,
 		"Summary: 2 to create, 1 to update, 1 unchanged, 2 ignored source items.",
-		"No GitLab or YouTrack changes were applied.",
+		"Preview complete; no GitLab or YouTrack changes have been applied.",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("output %q does not contain %q", output.String(), want)

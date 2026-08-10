@@ -1,0 +1,383 @@
+package gitlab
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+const defaultSyncLabelColor = "#428BCA"
+
+const workItemByIIDQuery = `query ProjectWorkItem($fullPath: ID!, $iid: String!) {
+  namespace(fullPath: $fullPath) {
+    workItem(iid: $iid) {
+      id
+      iid
+      workItemType { name }
+    }
+  }
+}`
+
+const taskTypeQuery = `query ProjectTaskType($fullPath: ID!) {
+  namespace(fullPath: $fullPath) {
+    workItemTypes(name: TASK) {
+      nodes { id name }
+    }
+  }
+}`
+
+const createTaskMutation = `mutation CreateProjectTask($input: WorkItemCreateInput!) {
+  workItemCreate(input: $input) {
+    workItem { id iid workItemType { name } }
+    errors
+  }
+}`
+
+const setWorkItemParentMutation = `mutation SetWorkItemParent($input: WorkItemUpdateInput!) {
+  workItemUpdate(input: $input) {
+    workItem { id }
+    errors
+  }
+}`
+
+type CreatedIssue struct {
+	IID int64
+}
+
+type WorkItemReference struct {
+	ID  string
+	IID int64
+}
+
+func (client *Client) CreateLabel(ctx context.Context, projectID int64, name string) error {
+	endpoint := fmt.Sprintf("projects/%d/labels", projectID)
+	_, err := client.output(ctx, "api", endpoint, "-X", "POST", "-f", "name="+name, "-f", "color="+defaultSyncLabelColor)
+	if err != nil {
+		return fmt.Errorf("create GitLab label %q: %w", name, err)
+	}
+	return nil
+}
+
+func (client *Client) CreateMilestone(ctx context.Context, projectID int64, title, description string, close bool) (Milestone, error) {
+	endpoint := fmt.Sprintf("projects/%d/milestones", projectID)
+	output, err := client.output(ctx, "api", endpoint, "-X", "POST", "-f", "title="+title, "-f", "description="+description)
+	if err != nil {
+		return Milestone{}, fmt.Errorf("create GitLab milestone %q: %w", title, err)
+	}
+	milestone, err := parseMilestone(output)
+	if err != nil {
+		return Milestone{}, fmt.Errorf("decode created GitLab milestone %q: %w", title, err)
+	}
+	if close {
+		if err := client.UpdateMilestone(ctx, projectID, milestone.ID, title, description, true); err != nil {
+			return Milestone{}, err
+		}
+		milestone.State = "closed"
+	}
+	return milestone, nil
+}
+
+func (client *Client) UpdateMilestone(ctx context.Context, projectID, milestoneID int64, title, description string, close bool) error {
+	endpoint := fmt.Sprintf("projects/%d/milestones/%d", projectID, milestoneID)
+	args := []string{"api", endpoint, "-X", "PUT", "-f", "title=" + title, "-f", "description=" + description}
+	if close {
+		args = append(args, "-f", "state_event=close")
+	}
+	if _, err := client.output(ctx, args...); err != nil {
+		return fmt.Errorf("update GitLab milestone %d: %w", milestoneID, err)
+	}
+	return nil
+}
+
+func (client *Client) CreateIssue(ctx context.Context, projectID int64, title, description string, labels []string, milestoneID *int64, close bool) (CreatedIssue, error) {
+	endpoint := fmt.Sprintf("projects/%d/issues", projectID)
+	args := []string{
+		"api", endpoint, "-X", "POST",
+		"-f", "title=" + title,
+		"-f", "description=" + description,
+		"-f", "labels=" + strings.Join(labels, ","),
+		"-f", "issue_type=issue",
+	}
+	if milestoneID != nil {
+		args = append(args, "-f", "milestone_id="+strconv.FormatInt(*milestoneID, 10))
+	}
+	output, err := client.output(ctx, args...)
+	if err != nil {
+		return CreatedIssue{}, fmt.Errorf("create GitLab issue %q: %w", title, err)
+	}
+	created, err := parseCreatedIssue(output)
+	if err != nil {
+		return CreatedIssue{}, fmt.Errorf("decode created GitLab issue %q: %w", title, err)
+	}
+	if close {
+		if err := client.UpdateIssue(ctx, projectID, created.IID, title, description, labels, milestoneID, true); err != nil {
+			return CreatedIssue{}, err
+		}
+	}
+	return created, nil
+}
+
+func (client *Client) UpdateIssue(ctx context.Context, projectID, issueIID int64, title, description string, labels []string, milestoneID *int64, close bool) error {
+	endpoint := fmt.Sprintf("projects/%d/issues/%d", projectID, issueIID)
+	args := []string{
+		"api", endpoint, "-X", "PUT",
+		"-f", "title=" + title,
+		"-f", "description=" + description,
+		"-f", "labels=" + strings.Join(labels, ","),
+	}
+	if milestoneID != nil {
+		args = append(args, "-f", "milestone_id="+strconv.FormatInt(*milestoneID, 10))
+	}
+	if close {
+		args = append(args, "-f", "state_event=close")
+	}
+	if _, err := client.output(ctx, args...); err != nil {
+		return fmt.Errorf("update GitLab issue #%d: %w", issueIID, err)
+	}
+	return nil
+}
+
+func parseCreatedIssue(data []byte) (CreatedIssue, error) {
+	var value struct {
+		IID *int64 `json:"iid"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return CreatedIssue{}, err
+	}
+	if value.IID == nil || *value.IID < 1 {
+		return CreatedIssue{}, fmt.Errorf("missing or invalid field %q", "iid")
+	}
+	return CreatedIssue{IID: *value.IID}, nil
+}
+
+func (client *Client) WorkItemID(ctx context.Context, projectPath string, iid int64, expectedType string) (string, error) {
+	output, err := client.output(ctx,
+		"api", "graphql",
+		"-f", "query="+workItemByIIDQuery,
+		"-f", "fullPath="+projectPath,
+		"-f", "iid="+strconv.FormatInt(iid, 10),
+	)
+	if err != nil {
+		return "", fmt.Errorf("query GitLab %s #%d work item ID: %w", expectedType, iid, err)
+	}
+
+	var response struct {
+		Data struct {
+			Namespace json.RawMessage `json:"namespace"`
+		} `json:"data"`
+		Errors []taskErrorJSON `json:"errors"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return "", fmt.Errorf("decode GitLab %s #%d work item ID: %w", expectedType, iid, err)
+	}
+	if err := graphQLErrors(response.Errors); err != nil {
+		return "", err
+	}
+	if response.Data.Namespace == nil || bytes.Equal(response.Data.Namespace, []byte("null")) {
+		return "", fmt.Errorf("GitLab namespace %q was not found", projectPath)
+	}
+	var namespace struct {
+		WorkItem json.RawMessage `json:"workItem"`
+	}
+	if err := json.Unmarshal(response.Data.Namespace, &namespace); err != nil {
+		return "", fmt.Errorf("decode GitLab namespace: %w", err)
+	}
+	if namespace.WorkItem == nil || bytes.Equal(namespace.WorkItem, []byte("null")) {
+		return "", fmt.Errorf("GitLab %s #%d work item was not found", expectedType, iid)
+	}
+	var workItem struct {
+		ID           *string         `json:"id"`
+		IID          json.RawMessage `json:"iid"`
+		WorkItemType *taskTypeJSON   `json:"workItemType"`
+	}
+	if err := json.Unmarshal(namespace.WorkItem, &workItem); err != nil {
+		return "", fmt.Errorf("decode GitLab work item: %w", err)
+	}
+	parsedIID, err := parseGraphQLIID(workItem.IID)
+	if err != nil || parsedIID != iid {
+		return "", fmt.Errorf("GitLab work item returned an unexpected IID")
+	}
+	if workItem.ID == nil || strings.TrimSpace(*workItem.ID) == "" {
+		return "", fmt.Errorf("GitLab work item has no valid ID")
+	}
+	if workItem.WorkItemType == nil || workItem.WorkItemType.Name == nil || !strings.EqualFold(*workItem.WorkItemType.Name, expectedType) {
+		return "", fmt.Errorf("GitLab work item #%d is not a %s", iid, expectedType)
+	}
+	return *workItem.ID, nil
+}
+
+func (client *Client) TaskTypeID(ctx context.Context, projectPath string) (string, error) {
+	output, err := client.output(ctx,
+		"api", "graphql",
+		"-f", "query="+taskTypeQuery,
+		"-f", "fullPath="+projectPath,
+	)
+	if err != nil {
+		return "", fmt.Errorf("query GitLab task work item type: %w", err)
+	}
+	var response struct {
+		Data struct {
+			Namespace json.RawMessage `json:"namespace"`
+		} `json:"data"`
+		Errors []taskErrorJSON `json:"errors"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return "", fmt.Errorf("decode GitLab task work item type: %w", err)
+	}
+	if err := graphQLErrors(response.Errors); err != nil {
+		return "", err
+	}
+	if response.Data.Namespace == nil || bytes.Equal(response.Data.Namespace, []byte("null")) {
+		return "", fmt.Errorf("GitLab namespace %q was not found", projectPath)
+	}
+	var namespace struct {
+		WorkItemTypes *struct {
+			Nodes *[]struct {
+				ID   *string `json:"id"`
+				Name *string `json:"name"`
+			} `json:"nodes"`
+		} `json:"workItemTypes"`
+	}
+	if err := json.Unmarshal(response.Data.Namespace, &namespace); err != nil {
+		return "", fmt.Errorf("decode GitLab task work item type: %w", err)
+	}
+	if namespace.WorkItemTypes == nil || namespace.WorkItemTypes.Nodes == nil || len(*namespace.WorkItemTypes.Nodes) != 1 {
+		return "", fmt.Errorf("expected exactly one GitLab task work item type")
+	}
+	taskType := (*namespace.WorkItemTypes.Nodes)[0]
+	if taskType.ID == nil || strings.TrimSpace(*taskType.ID) == "" || taskType.Name == nil || !strings.EqualFold(*taskType.Name, "Task") {
+		return "", fmt.Errorf("GitLab task work item type is incomplete")
+	}
+	return *taskType.ID, nil
+}
+
+func (client *Client) CreateTask(ctx context.Context, projectPath, taskTypeID, parentID, title, description string) (WorkItemReference, error) {
+	input := struct {
+		NamespacePath     string `json:"namespacePath"`
+		WorkItemTypeID    string `json:"workItemTypeId"`
+		Title             string `json:"title"`
+		DescriptionWidget struct {
+			Description string `json:"description"`
+		} `json:"descriptionWidget"`
+		HierarchyWidget struct {
+			ParentID string `json:"parentId"`
+		} `json:"hierarchyWidget"`
+	}{NamespacePath: projectPath, WorkItemTypeID: taskTypeID, Title: title}
+	input.DescriptionWidget.Description = description
+	input.HierarchyWidget.ParentID = parentID
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		return WorkItemReference{}, fmt.Errorf("encode GitLab task input: %w", err)
+	}
+	output, err := client.output(ctx,
+		"api", "graphql",
+		"-f", "query="+createTaskMutation,
+		"-F", "input="+string(inputJSON),
+	)
+	if err != nil {
+		return WorkItemReference{}, fmt.Errorf("create GitLab task %q: %w", title, err)
+	}
+	return parseWorkItemMutation(output, "workItemCreate", "Task")
+}
+
+func (client *Client) SetWorkItemParent(ctx context.Context, taskID, parentID string) error {
+	input := struct {
+		ID              string `json:"id"`
+		HierarchyWidget struct {
+			ParentID string `json:"parentId"`
+		} `json:"hierarchyWidget"`
+	}{ID: taskID}
+	input.HierarchyWidget.ParentID = parentID
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("encode GitLab task parent input: %w", err)
+	}
+	output, err := client.output(ctx,
+		"api", "graphql",
+		"-f", "query="+setWorkItemParentMutation,
+		"-F", "input="+string(inputJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("set GitLab task parent: %w", err)
+	}
+	if _, err := parseWorkItemMutation(output, "workItemUpdate", ""); err != nil {
+		return fmt.Errorf("set GitLab task parent: %w", err)
+	}
+	return nil
+}
+
+func parseWorkItemMutation(data []byte, field, expectedType string) (WorkItemReference, error) {
+	var response struct {
+		Data   map[string]json.RawMessage `json:"data"`
+		Errors []taskErrorJSON            `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return WorkItemReference{}, err
+	}
+	if err := graphQLErrors(response.Errors); err != nil {
+		return WorkItemReference{}, err
+	}
+	payloadJSON, exists := response.Data[field]
+	if !exists || bytes.Equal(payloadJSON, []byte("null")) {
+		return WorkItemReference{}, fmt.Errorf("GraphQL response is missing %s", field)
+	}
+	var payload struct {
+		WorkItem json.RawMessage `json:"workItem"`
+		Errors   []string        `json:"errors"`
+	}
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return WorkItemReference{}, err
+	}
+	if len(payload.Errors) > 0 {
+		return WorkItemReference{}, fmt.Errorf("GraphQL mutation errors: %s", strings.Join(payload.Errors, "; "))
+	}
+	if payload.WorkItem == nil || bytes.Equal(payload.WorkItem, []byte("null")) {
+		return WorkItemReference{}, fmt.Errorf("GraphQL mutation returned no work item")
+	}
+	var workItem struct {
+		ID           *string         `json:"id"`
+		IID          json.RawMessage `json:"iid"`
+		WorkItemType *taskTypeJSON   `json:"workItemType"`
+	}
+	if err := json.Unmarshal(payload.WorkItem, &workItem); err != nil {
+		return WorkItemReference{}, err
+	}
+	if workItem.ID == nil || strings.TrimSpace(*workItem.ID) == "" {
+		return WorkItemReference{}, fmt.Errorf("GraphQL mutation returned no work item ID")
+	}
+	reference := WorkItemReference{ID: *workItem.ID}
+	if workItem.IID != nil {
+		parsedIID, err := parseGraphQLIID(workItem.IID)
+		if err != nil {
+			return WorkItemReference{}, fmt.Errorf("GraphQL mutation returned invalid IID: %w", err)
+		}
+		reference.IID = parsedIID
+	}
+	if expectedType != "" {
+		if reference.IID < 1 {
+			return WorkItemReference{}, fmt.Errorf("GraphQL mutation returned no IID")
+		}
+		if workItem.WorkItemType == nil || workItem.WorkItemType.Name == nil || !strings.EqualFold(*workItem.WorkItemType.Name, expectedType) {
+			return WorkItemReference{}, fmt.Errorf("GraphQL mutation returned unexpected work item type")
+		}
+	}
+	return reference, nil
+}
+
+func graphQLErrors(errors []taskErrorJSON) error {
+	if len(errors) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(errors))
+	for _, graphQLError := range errors {
+		message := strings.TrimSpace(graphQLError.Message)
+		if message == "" {
+			message = "unknown GraphQL error"
+		}
+		messages = append(messages, message)
+	}
+	return fmt.Errorf("GraphQL errors: %s", strings.Join(messages, "; "))
+}

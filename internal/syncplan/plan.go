@@ -53,9 +53,16 @@ type Action struct {
 }
 
 type Plan struct {
-	Actions   []Action
-	Unchanged int
-	Ignored   int
+	Actions    []Action
+	References map[string]Reference
+	Unchanged  int
+	Ignored    int
+}
+
+type Reference struct {
+	Target Target
+	ID     string
+	IID    int64
 }
 
 type Current struct {
@@ -127,7 +134,7 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 		existingIssuesBySource[desiredItem.SourceID] = candidate
 	}
 
-	plan := Plan{Ignored: ignored}
+	plan := Plan{Ignored: ignored, References: make(map[string]Reference)}
 	neededLabels := make(map[string]struct{})
 	for _, desiredItem := range desired {
 		candidate, found, err := findExisting(desiredItem, existing, markers)
@@ -149,6 +156,11 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 			return Plan{}, fmt.Errorf("GitLab %s %s matches both YouTrack %q and %q", candidate.target, candidate.reference(), previous, desiredItem.SourceID)
 		}
 		matched[identity] = desiredItem.SourceID
+		plan.References[desiredItem.SourceID] = Reference{
+			Target: candidate.target,
+			ID:     candidate.id,
+			IID:    candidate.iid,
+		}
 
 		changes := compare(desiredItem, candidate, existingIssuesBySource)
 		if len(changes) == 0 {

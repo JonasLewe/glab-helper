@@ -79,6 +79,9 @@ func TestBuildCreatesDeterministicCombinedPlanAndAdoptsLegacyItems(t *testing.T)
 	if !reflect.DeepEqual(issue.Desired.Labels, []string{"backend", "manual", "prio::Major", "status::In Progress"}) {
 		t.Fatalf("desired issue labels = %q", issue.Desired.Labels)
 	}
+	if reference := plan.References["APP-2"]; reference.Target != Issue || reference.IID != 7 {
+		t.Fatalf("issue reference = %#v", reference)
+	}
 	task := plan.Actions[5]
 	if task.Desired.SourceID != "APP-3" || task.Desired.ParentSourceID != "APP-2" || !strings.Contains(task.Desired.Description, "glab-helper:youtrack:APP-3") {
 		t.Fatalf("task action = %#v", task)

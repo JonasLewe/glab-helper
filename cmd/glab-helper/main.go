@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	gitrepo "github.com/JonasLewe/glab-helper/internal/git"
 	"github.com/JonasLewe/glab-helper/internal/gitlab"
 	"github.com/JonasLewe/glab-helper/internal/projectconfig"
 	"github.com/JonasLewe/glab-helper/internal/source"
+	"github.com/JonasLewe/glab-helper/internal/syncapply"
 	"github.com/JonasLewe/glab-helper/internal/syncplan"
 	"github.com/JonasLewe/glab-helper/internal/youtrack"
 )
@@ -37,10 +40,10 @@ const help = `
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var dev, maintenance, dryRun, showHelp, showVersion bool
 
 	for _, arg := range args {
@@ -132,7 +135,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Cannot read all GitLab labels for %s: %v\n", project.Path, err)
 		return 1
 	}
-	if dryRun && !maintenance {
+	if youTrackAvailable && !maintenance {
 		plan, err := syncplan.Build(sourceSnapshot, projectConfig, syncplan.Current{
 			Milestones: milestones,
 			Issues:     issues,
@@ -144,6 +147,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		syncplan.WritePreview(stdout, project.Path, plan)
+		if dryRun || len(plan.Actions) == 0 {
+			return 0
+		}
+		fmt.Fprint(stdout, "Apply this synchronization plan? [y/N] ")
+		answer, readErr := bufio.NewReader(stdin).ReadString('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			fmt.Fprintf(stderr, "Cannot read synchronization confirmation: %v\n", readErr)
+			return 1
+		}
+		answer = strings.TrimSpace(answer)
+		if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+			fmt.Fprintln(stdout, "Synchronization cancelled. No changes were applied.")
+			return 0
+		}
+		result, err := syncapply.Apply(ctx, client, project.ID, project.Path, plan)
+		if err != nil {
+			fmt.Fprintf(stderr, "Synchronization stopped after %d of %d completed actions: %v\n", result.Applied, result.Total, err)
+			fmt.Fprintln(stderr, "The current action may be partially applied; run --dry-run again before retrying.")
+			return 1
+		}
+		fmt.Fprintf(stdout, "Applied %d GitLab synchronization actions. YouTrack remained read-only.\n", result.Applied)
 		return 0
 	}
 	branches, err := gitrepo.NewClient().ListRemoteBranches(ctx)

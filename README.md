@@ -40,25 +40,33 @@ drop-in replacement. Offline help and version commands are available:
 go run ./cmd/glab-helper --help
 go run ./cmd/glab-helper --version
 go run ./cmd/glab-helper --dry-run
+go run ./cmd/glab-helper
 ```
 
-The normal development path validates the current GitLab
-project, reads every GitLab issue, task, milestone, and label without
-mutations, reads the locally available `origin` remote-tracking branches
-without fetching or pruning, and loads the YouTrack configuration from GitLab.
-Issues are filtered explicitly to GitLab's `issue` type; tasks and their parent
-issues are read separately through the paginated work-item GraphQL API. When
-the YouTrack configuration is available, the binary reads every issue selected
-by the configured query through paginated YouTrack `GET` requests into an
-in-memory, provider-neutral snapshot. Missing YouTrack access remains optional
-except in maintenance and synchronization-preview modes. The interactive
-workflows still use the Jira-based Zsh implementation.
+The Go sync path validates the current GitLab project and reads every GitLab
+issue, task, milestone, and label before planning any write. Issues are
+filtered explicitly to GitLab's `issue` type; tasks and their parent issues are
+read separately through the paginated work-item GraphQL API. The binary reads
+every issue selected by the configured YouTrack query through paginated `GET`
+requests into an in-memory, provider-neutral snapshot. YouTrack is never
+written. Missing YouTrack access remains optional except in maintenance and
+synchronization-preview modes. The later interactive workflows still use the
+Jira-based Zsh implementation.
 
 `--dry-run` now builds and prints the combined YouTrack synchronization plan.
 The preview includes labels, milestones, issues, tasks, their configured
 relationships, field updates, forward-only closing, unchanged items, and
 ignored source levels. It returns before reading or changing branches and does
 not send any GitLab or YouTrack write request.
+
+Without `--dry-run`, the same plan is printed and must be confirmed explicitly
+with `y` or `yes`; an empty response and every other answer cancel without a
+write. A confirmed plan creates or updates GitLab labels, milestones, issues,
+and tasks in dependency order. Tasks are created through the work-item API
+with their issue parent already assigned. Updates never reopen closed targets.
+If one action fails, execution stops immediately, reports how many preceding
+actions completed, and asks for a fresh `--dry-run` before retrying. The plan is
+idempotent, so successfully completed actions are recognized on that retry.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by
