@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JonasLewe/glab-helper/internal/projectconfig"
 	"github.com/JonasLewe/glab-helper/internal/source"
 )
 
@@ -20,8 +21,6 @@ const (
 	issuePageSize = 100
 	issueFields   = "id,idReadable,summary,description,resolved,tags(name),customFields(name,value(name)),parent(issues(idReadable))"
 )
-
-var snapshotCustomFields = []string{"Type", "State", "Priority"}
 
 var snapshotHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -55,32 +54,35 @@ type parentJSON struct {
 	} `json:"issues"`
 }
 
-func ReadSnapshot(ctx context.Context, config Config) (source.Snapshot, error) {
-	return readSnapshotWithClient(ctx, snapshotHTTPClient, config, issuePageSize)
+func ReadSnapshot(ctx context.Context, connection Config, project projectconfig.Config) (source.Snapshot, error) {
+	return readSnapshotWithClient(ctx, snapshotHTTPClient, connection, project, issuePageSize)
 }
 
-func readSnapshotWithClient(ctx context.Context, client httpDoer, config Config, pageSize int) (source.Snapshot, error) {
-	snapshot, err := readSnapshot(ctx, client, config, pageSize)
+func readSnapshotWithClient(ctx context.Context, client httpDoer, connection Config, project projectconfig.Config, pageSize int) (source.Snapshot, error) {
+	snapshot, err := readSnapshot(ctx, client, connection, project, pageSize)
 	if err == nil {
 		return snapshot, nil
 	}
 
 	message := err.Error()
-	if config.token != "" {
-		message = strings.ReplaceAll(message, config.token, "<redacted>")
+	if connection.token != "" {
+		message = strings.ReplaceAll(message, connection.token, "<redacted>")
 	}
 	return source.Snapshot{}, fmt.Errorf("read YouTrack source snapshot: %s", message)
 }
 
-func readSnapshot(ctx context.Context, client httpDoer, config Config, pageSize int) (source.Snapshot, error) {
-	if strings.TrimSpace(config.URL) == "" || strings.TrimSpace(config.Query) == "" || strings.TrimSpace(config.token) == "" {
+func readSnapshot(ctx context.Context, client httpDoer, connection Config, project projectconfig.Config, pageSize int) (source.Snapshot, error) {
+	if strings.TrimSpace(connection.URL) == "" || strings.TrimSpace(connection.token) == "" {
 		return source.Snapshot{}, fmt.Errorf("incomplete YouTrack configuration")
+	}
+	if err := project.Validate(); err != nil {
+		return source.Snapshot{}, fmt.Errorf("invalid project configuration: %w", err)
 	}
 	if pageSize < 1 {
 		return source.Snapshot{}, fmt.Errorf("page size must be positive")
 	}
 
-	endpoint, err := url.Parse(config.URL + "/api/issues")
+	endpoint, err := url.Parse(connection.URL + "/api/issues")
 	if err != nil {
 		return source.Snapshot{}, fmt.Errorf("build YouTrack issues endpoint: %w", err)
 	}
@@ -88,7 +90,7 @@ func readSnapshot(ctx context.Context, client httpDoer, config Config, pageSize 
 	items := make([]source.WorkItem, 0)
 	seenIDs := make(map[string]struct{})
 	for skip := 0; ; skip += pageSize {
-		page, err := readIssuePage(ctx, client, endpoint, config, pageSize, skip)
+		page, err := readIssuePage(ctx, client, endpoint, connection, project, pageSize, skip)
 		if err != nil {
 			return source.Snapshot{}, fmt.Errorf("page starting at %d: %w", skip, err)
 		}
@@ -97,7 +99,7 @@ func readSnapshot(ctx context.Context, client httpDoer, config Config, pageSize 
 		}
 
 		for index, rawIssue := range page {
-			item, err := parseIssue(rawIssue)
+			item, err := parseIssue(rawIssue, project)
 			if err != nil {
 				return source.Snapshot{}, fmt.Errorf("page starting at %d issue %d: %w", skip, index+1, err)
 			}
@@ -109,19 +111,22 @@ func readSnapshot(ctx context.Context, client httpDoer, config Config, pageSize 
 		}
 
 		if len(page) < pageSize {
+			if err := validateSnapshotHierarchy(items, project); err != nil {
+				return source.Snapshot{}, err
+			}
 			return source.Snapshot{WorkItems: items}, nil
 		}
 	}
 }
 
-func readIssuePage(ctx context.Context, client httpDoer, endpoint *url.URL, config Config, pageSize, skip int) ([]json.RawMessage, error) {
+func readIssuePage(ctx context.Context, client httpDoer, endpoint *url.URL, connection Config, project projectconfig.Config, pageSize, skip int) ([]json.RawMessage, error) {
 	requestURL := *endpoint
 	query := requestURL.Query()
 	query.Set("fields", issueFields)
-	query.Set("query", config.Query)
+	query.Set("query", project.YouTrack.Query)
 	query.Set("$top", strconv.Itoa(pageSize))
 	query.Set("$skip", strconv.Itoa(skip))
-	for _, field := range snapshotCustomFields {
+	for _, field := range []string{project.YouTrack.Fields.Kind, project.YouTrack.Fields.Status, project.YouTrack.Fields.Priority} {
 		query.Add("customFields", field)
 	}
 	requestURL.RawQuery = query.Encode()
@@ -131,7 +136,7 @@ func readIssuePage(ctx context.Context, client httpDoer, endpoint *url.URL, conf
 		return nil, fmt.Errorf("build issue request: %w", err)
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+config.token)
+	request.Header.Set("Authorization", "Bearer "+connection.token)
 
 	response, err := client.Do(request)
 	if err != nil {
@@ -161,7 +166,7 @@ func readIssuePage(ctx context.Context, client httpDoer, endpoint *url.URL, conf
 	return page, nil
 }
 
-func parseIssue(data []byte) (source.WorkItem, error) {
+func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, error) {
 	var value issueJSON
 	if err := json.Unmarshal(data, &value); err != nil {
 		return source.WorkItem{}, err
@@ -227,27 +232,39 @@ func parseIssue(data []byte) (source.WorkItem, error) {
 		if field.Name == nil || strings.TrimSpace(*field.Name) == "" {
 			return source.WorkItem{}, fmt.Errorf("field %q item %d has no valid name", "customFields", index+1)
 		}
-		name := strings.ToLower(*field.Name)
-		if name != "type" && name != "state" && name != "priority" {
+		fieldRole := ""
+		switch {
+		case strings.EqualFold(*field.Name, project.YouTrack.Fields.Kind):
+			fieldRole = "kind"
+		case strings.EqualFold(*field.Name, project.YouTrack.Fields.Status):
+			fieldRole = "status"
+		case strings.EqualFold(*field.Name, project.YouTrack.Fields.Priority):
+			fieldRole = "priority"
+		default:
 			continue
 		}
-		if _, exists := seenFields[name]; exists {
+		if _, exists := seenFields[fieldRole]; exists {
 			return source.WorkItem{}, fmt.Errorf("field %q contains duplicate %q", "customFields", *field.Name)
 		}
-		seenFields[name] = struct{}{}
+		seenFields[fieldRole] = struct{}{}
 		fieldValue, err := parseNamedFieldValue(field.Value)
 		if err != nil {
 			return source.WorkItem{}, fmt.Errorf("custom field %q: %w", *field.Name, err)
 		}
-		switch name {
-		case "type":
+		switch fieldRole {
+		case "kind":
 			item.Kind = fieldValue
-		case "state":
+		case "status":
 			item.Status = fieldValue
 		case "priority":
 			item.Priority = fieldValue
 		}
 	}
+	role, _, found := project.RoleForKind(item.Kind)
+	if !found {
+		return source.WorkItem{}, fmt.Errorf("custom field %q value %q is not assigned to a configured hierarchy role", project.YouTrack.Fields.Kind, item.Kind)
+	}
+	item.Role = role
 
 	if !bytes.Equal(value.Parent, []byte("null")) {
 		var parent parentJSON
@@ -261,6 +278,38 @@ func parseIssue(data []byte) (source.WorkItem, error) {
 	}
 
 	return item, nil
+}
+
+func validateSnapshotHierarchy(items []source.WorkItem, project projectconfig.Config) error {
+	itemsByID := make(map[string]source.WorkItem, len(items))
+	roleLevels := make(map[string]int, len(project.YouTrack.Hierarchy))
+	for index, level := range project.YouTrack.Hierarchy {
+		roleLevels[level.Role] = index
+	}
+	for _, item := range items {
+		itemsByID[item.ID] = item
+	}
+	for _, item := range items {
+		level := roleLevels[item.Role]
+		if level == 0 {
+			if item.ParentID != "" {
+				return fmt.Errorf("YouTrack issue %q with root role %q unexpectedly has parent %q", item.ID, item.Role, item.ParentID)
+			}
+			continue
+		}
+		if item.ParentID == "" {
+			return fmt.Errorf("YouTrack issue %q with role %q has no parent", item.ID, item.Role)
+		}
+		parent, exists := itemsByID[item.ParentID]
+		if !exists {
+			return fmt.Errorf("YouTrack issue %q references parent %q outside the configured query", item.ID, item.ParentID)
+		}
+		expectedRole := project.YouTrack.Hierarchy[level-1].Role
+		if parent.Role != expectedRole {
+			return fmt.Errorf("YouTrack issue %q with role %q requires parent role %q, got %q", item.ID, item.Role, expectedRole, parent.Role)
+		}
+	}
+	return nil
 }
 
 func parseNamedFieldValue(data []byte) (string, error) {

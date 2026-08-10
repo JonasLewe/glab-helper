@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	gitrepo "github.com/JonasLewe/glab-helper/internal/git"
 	"github.com/JonasLewe/glab-helper/internal/gitlab"
+	"github.com/JonasLewe/glab-helper/internal/projectconfig"
 	"github.com/JonasLewe/glab-helper/internal/youtrack"
 )
 
@@ -78,15 +80,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Cannot detect the current GitLab project: %v\n", err)
 		return 1
 	}
-	youTrackConfig, youTrackConfigErr := youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
-	youTrackAvailable := youTrackConfigErr == nil
+	projectConfigPath := os.Getenv("GLAB_HELPER_CONFIG")
+	projectConfig, projectConfigErr := projectconfig.Load(projectConfigPath)
+	if projectConfigErr != nil && (!errors.Is(projectConfigErr, projectconfig.ErrNotFound) || projectConfigPath != "") {
+		fmt.Fprintf(stderr, "Cannot load the project configuration: %v\n", projectConfigErr)
+		return 1
+	}
+	projectConfigAvailable := projectConfigErr == nil
+	youTrackConfig := youtrack.Config{}
+	youTrackAvailable := false
+	if projectConfigAvailable {
+		youTrackConfig, err = youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
+		youTrackAvailable = err == nil
+	}
 	if maintenance && !youTrackAvailable {
 		fmt.Fprintln(stderr, "Maintenance mode requires the configured YouTrack target project.")
 		return 1
 	}
 	youTrackItemCount := 0
 	if youTrackAvailable {
-		snapshot, err := readYouTrackSnapshot(ctx, youTrackConfig)
+		snapshot, err := readYouTrackSnapshot(ctx, youTrackConfig, projectConfig)
 		if err != nil {
 			fmt.Fprintf(stderr, "Cannot read the complete YouTrack source snapshot: %v\n", err)
 			return 1

@@ -9,6 +9,7 @@ type WorkItem struct {
 	Title       string
 	Description string
 	Kind        string
+	Role        string
 	Status      string
 	Priority    string
 	Tags        []string

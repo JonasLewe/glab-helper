@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JonasLewe/glab-helper/internal/projectconfig"
 	"github.com/JonasLewe/glab-helper/internal/source"
 	"github.com/JonasLewe/glab-helper/internal/youtrack"
 )
@@ -44,6 +45,23 @@ func TestOnlineCLIReadsProjectData(t *testing.T) {
 	commandLog := filepath.Join(temporaryDirectory, "commands")
 	glabPath := filepath.Join(temporaryDirectory, "glab")
 	gitPath := filepath.Join(temporaryDirectory, "git")
+	projectConfigPath := filepath.Join(temporaryDirectory, "project-config.json")
+	projectConfiguration := `{
+  "version": 1,
+  "youtrack": {
+    "query": "project: APP tag: gitlab-sync",
+    "fields": {"kind": "Type", "status": "State", "priority": "Priority"},
+    "hierarchy": [
+      {"role": "epic", "types": ["Epic"]},
+      {"role": "feature", "types": ["Feature"]},
+      {"role": "story", "types": ["User Story"]}
+    ]
+  },
+  "gitlab": {"targets": {"epic": "milestone", "feature": "issue", "story": "task"}}
+}`
+	if err := os.WriteFile(projectConfigPath, []byte(projectConfiguration), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	glabStub := `#!/bin/sh
 printf '%s\n' "$*" >>"$COMMAND_LOG"
 case "$*" in
@@ -53,9 +71,6 @@ case "$*" in
   "api projects/group%2Fproject/variables/YOUTRACK_URL")
     if [ "${YOUTRACK_CONFIG_UNAVAILABLE:-}" = true ]; then exit 1; fi
     printf '{"value":"%s"}\n' "$YOUTRACK_URL"
-    ;;
-  "api projects/group%2Fproject/variables/YOUTRACK_QUERY")
-    printf '%s\n' '{"value":"project: APP tag: gitlab-sync"}'
     ;;
   "api projects/group%2Fproject/variables/YOUTRACK_TOKEN")
     printf '%s\n' '{"value":"secret-token"}'
@@ -100,19 +115,20 @@ esac
 
 	const projectReadCommands = "api --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\nfor-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
 	tests := []struct {
-		name                string
-		args                []string
-		youTrackUnavailable bool
-		youTrackReadFails   bool
-		code                int
-		wantOutput          string
-		wantCommandSuffix   string
+		name                 string
+		args                 []string
+		youTrackUnavailable  bool
+		projectConfigMissing bool
+		youTrackReadFails    bool
+		code                 int
+		wantOutput           string
+		wantCommandSuffix    string
 	}{
 		{
 			name:              "YouTrack config available",
 			code:              2,
 			wantOutput:        "read 0 YouTrack work items into memory",
-			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_QUERY\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + projectReadCommands,
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + projectReadCommands,
 		},
 		{
 			name:                "YouTrack config optional",
@@ -130,11 +146,18 @@ esac
 			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n",
 		},
 		{
+			name:                 "explicit missing project config fails",
+			projectConfigMissing: true,
+			code:                 1,
+			wantOutput:           "Cannot load the project configuration",
+			wantCommandSuffix:    "",
+		},
+		{
 			name:              "YouTrack read failure stops before GitLab reads",
 			youTrackReadFails: true,
 			code:              1,
 			wantOutput:        "Cannot read the complete YouTrack source snapshot",
-			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_QUERY\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n",
 		},
 	}
 
@@ -142,7 +165,7 @@ esac
 		t.Run(test.name, func(t *testing.T) {
 			youTrackRequests := 0
 			previousReadYouTrackSnapshot := readYouTrackSnapshot
-			readYouTrackSnapshot = func(_ context.Context, _ youtrack.Config) (source.Snapshot, error) {
+			readYouTrackSnapshot = func(_ context.Context, _ youtrack.Config, _ projectconfig.Config) (source.Snapshot, error) {
 				youTrackRequests++
 				if test.youTrackReadFails {
 					return source.Snapshot{}, errors.New("later page failed")
@@ -151,11 +174,16 @@ esac
 			}
 			defer func() { readYouTrackSnapshot = previousReadYouTrackSnapshot }()
 			t.Setenv("YOUTRACK_URL", "https://youtrack.example.com")
+			if test.projectConfigMissing {
+				t.Setenv("GLAB_HELPER_CONFIG", filepath.Join(temporaryDirectory, "missing.json"))
+			} else {
+				t.Setenv("GLAB_HELPER_CONFIG", projectConfigPath)
+			}
 
 			if err := os.Remove(commandLog); err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
-			if test.youTrackUnavailable {
+			if test.youTrackUnavailable || test.projectConfigMissing {
 				t.Setenv("YOUTRACK_CONFIG_UNAVAILABLE", "true")
 			} else {
 				t.Setenv("YOUTRACK_CONFIG_UNAVAILABLE", "")
@@ -178,7 +206,7 @@ esac
 				t.Fatalf("commands = %q, want %q", commands, wantCommands)
 			}
 			wantYouTrackRequests := 1
-			if test.youTrackUnavailable {
+			if test.youTrackUnavailable || test.projectConfigMissing {
 				wantYouTrackRequests = 0
 			}
 			if youTrackRequests != wantYouTrackRequests {

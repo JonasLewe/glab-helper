@@ -58,14 +58,40 @@ from the URL-encoded project selected by
 | Variable | Purpose |
 |---|---|
 | `YOUTRACK_URL` | Base URL of the YouTrack instance |
-| `YOUTRACK_QUERY` | YouTrack query selecting work items to synchronize |
 | `YOUTRACK_TOKEN` | Masked, read-only permanent token |
 | `YOUTRACK_TARGET_PROJECT` | Exact target GitLab `path_with_namespace` |
 
-The snapshot contains the readable issue ID, title, description, resolved
-state, tags, parent ID, and the conventional YouTrack custom fields `Type`,
-`State`, and `Priority` when present. It is never written to disk, and this
-migration step performs no YouTrack or GitLab mutation.
+Non-secret, project-specific behavior lives in a versioned
+`.glab-helper.json` in the target repository. Start with the included example:
+
+```bash
+cp ~/.local/share/glab-helper/.glab-helper.json.example .glab-helper.json
+```
+
+Set `GLAB_HELPER_CONFIG` to use a different path. An explicitly selected path
+must exist; only the absent default `.glab-helper.json` is treated as an
+optional integration. The configuration defines the
+YouTrack query, the names of the type/status/priority fields, accepted type
+aliases, the ordered hierarchy, and its GitLab targets. The checked-in example
+maps the MLOps hierarchy as follows:
+
+```text
+YouTrack Epic       -> GitLab milestone
+  YouTrack Feature  -> GitLab issue
+    YouTrack Story  -> GitLab task
+```
+
+This target model works with GitLab Community Edition 19.2.1. Every configured
+non-root YouTrack item must reference an item from the preceding hierarchy
+level that is also selected by the query. The complete read fails on unknown
+types, missing parents, or invalid target mappings.
+
+The resulting snapshot contains the readable issue ID, title, description,
+resolved state, tags, parent ID, raw YouTrack type, and normalized hierarchy
+role. It is never written to disk, and this migration step performs no YouTrack
+or GitLab mutation. A missing default project configuration or missing
+YouTrack access remains optional outside maintenance mode; a present but
+invalid configuration is always rejected.
 
 Make sure `~/.local/bin` is in your PATH:
 

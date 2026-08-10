@@ -11,7 +11,6 @@ import (
 func TestLoadConfig(t *testing.T) {
 	values := map[string]string{
 		variableURL:           "https://youtrack.example.com/",
-		variableQuery:         "project: APP tag: gitlab-sync",
 		variableToken:         "secret-token",
 		variableTargetProject: "group/project",
 	}
@@ -26,7 +25,6 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.URL != "https://youtrack.example.com" ||
-		config.Query != "project: APP tag: gitlab-sync" ||
 		config.TargetProject != "group/project" ||
 		config.VariableProjectPath != "group%2Fproject" ||
 		config.token != "secret-token" {
@@ -34,7 +32,6 @@ func TestLoadConfig(t *testing.T) {
 	}
 	wantRequests := []string{
 		"group%2Fproject:YOUTRACK_URL",
-		"group%2Fproject:YOUTRACK_QUERY",
 		"group%2Fproject:YOUTRACK_TOKEN",
 		"group%2Fproject:YOUTRACK_TARGET_PROJECT",
 	}
@@ -46,7 +43,6 @@ func TestLoadConfig(t *testing.T) {
 func TestLoadConfigTargetGuard(t *testing.T) {
 	values := map[string]string{
 		variableURL:           "https://youtrack.example.com",
-		variableQuery:         "project: APP",
 		variableToken:         "secret-token",
 		variableTargetProject: "other/project",
 	}
@@ -88,8 +84,6 @@ func TestLoadConfigDoesNotLeakTokenThroughErrors(t *testing.T) {
 		switch key {
 		case variableURL:
 			return "https://youtrack.example.com", nil
-		case variableQuery:
-			return "project: APP", nil
 		case variableToken:
 			return token, nil
 		default:

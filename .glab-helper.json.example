@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "youtrack": {
+    "query": "project: MLOPS tag: gitlab-sync",
+    "fields": {
+      "kind": "Type",
+      "status": "State",
+      "priority": "Priority"
+    },
+    "hierarchy": [
+      {
+        "role": "epic",
+        "types": ["Epic"]
+      },
+      {
+        "role": "feature",
+        "types": ["Feature"]
+      },
+      {
+        "role": "story",
+        "types": ["User Story"]
+      }
+    ]
+  },
+  "gitlab": {
+    "targets": {
+      "epic": "milestone",
+      "feature": "issue",
+      "story": "task"
+    }
+  }
+}

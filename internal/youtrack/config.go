@@ -12,13 +12,11 @@ import (
 const (
 	variableURL           = "YOUTRACK_URL"
 	variableToken         = "YOUTRACK_TOKEN"
-	variableQuery         = "YOUTRACK_QUERY"
 	variableTargetProject = "YOUTRACK_TARGET_PROJECT"
 )
 
 type Config struct {
 	URL                 string
-	Query               string
 	TargetProject       string
 	VariableProjectPath string
 	token               string
@@ -57,10 +55,6 @@ func loadConfig(ctx context.Context, readVariable projectVariableReader, current
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid YouTrack base URL")
 	}
-	query, err := readRequired(variableQuery)
-	if err != nil {
-		return Config{}, err
-	}
 	token, err := readRequired(variableToken)
 	if err != nil {
 		return Config{}, err
@@ -76,7 +70,6 @@ func loadConfig(ctx context.Context, readVariable projectVariableReader, current
 
 	return Config{
 		URL:                 youTrackURL,
-		Query:               query,
 		TargetProject:       targetProject,
 		VariableProjectPath: variableProjectPath,
 		token:               token,
