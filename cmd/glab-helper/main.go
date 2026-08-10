@@ -8,6 +8,7 @@ import (
 
 	gitrepo "github.com/JonasLewe/glab-helper/internal/git"
 	"github.com/JonasLewe/glab-helper/internal/gitlab"
+	"github.com/JonasLewe/glab-helper/internal/youtrack"
 )
 
 const version = "0.1.0"
@@ -19,9 +20,9 @@ const help = `
   ` + usage + `
 
   Options:
-    --dev, -d   Show developer actions and skip the Jira target-project check
+    --dev, -d   Show developer actions and skip the YouTrack target-project check
     --maintenance  Show destructive project maintenance actions
-    --dry-run   Read-only mode; preview Jira syncs without any writes
+    --dry-run   Read-only mode; preview YouTrack syncs without any writes
     --version   Show version and exit
 
   Run from any cloned GitLab repo. Requires: glab, fzf, jq
@@ -68,33 +69,45 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
+	ctx := context.Background()
 	client := gitlab.NewClient()
-	project, err := client.CurrentProject(context.Background())
+	project, err := client.CurrentProject(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot detect the current GitLab project: %v\n", err)
 		return 1
 	}
-	issues, err := client.ListIssues(context.Background(), project.ID)
+	_, youTrackConfigErr := youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
+	youTrackAvailable := youTrackConfigErr == nil
+	if maintenance && !youTrackAvailable {
+		fmt.Fprintln(stderr, "Maintenance mode requires the configured YouTrack target project.")
+		return 1
+	}
+
+	issues, err := client.ListIssues(ctx, project.ID)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot read all GitLab issues for %s: %v\n", project.Path, err)
 		return 1
 	}
-	milestones, err := client.ListMilestones(context.Background(), project.ID)
+	milestones, err := client.ListMilestones(ctx, project.ID)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot read all GitLab milestones for %s: %v\n", project.Path, err)
 		return 1
 	}
-	labels, err := client.ListLabels(context.Background(), project.ID)
+	labels, err := client.ListLabels(ctx, project.ID)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot read all GitLab labels for %s: %v\n", project.Path, err)
 		return 1
 	}
-	branches, err := gitrepo.NewClient().ListRemoteBranches(context.Background())
+	branches, err := gitrepo.NewClient().ListRemoteBranches(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot read current remote branches for %s: %v\n", project.Path, err)
 		return 1
 	}
 
-	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d milestones, %d labels, and %d remote branches without changes.\n", project.Path, len(issues), len(milestones), len(labels), len(branches))
+	youTrackStatus := "unavailable"
+	if youTrackAvailable {
+		youTrackStatus = "available"
+	}
+	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d milestones, %d labels, and %d remote branches without changes; YouTrack configuration is %s.\n", project.Path, len(issues), len(milestones), len(labels), len(branches), youTrackStatus)
 	return 2
 }

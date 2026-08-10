@@ -45,6 +45,19 @@ case "$*" in
   "repo view --output json")
     printf '%s\n' '{"id":42,"path_with_namespace":"group/project"}'
     ;;
+  "api projects/group%2Fproject/variables/YOUTRACK_URL")
+    if [ "${YOUTRACK_CONFIG_UNAVAILABLE:-}" = true ]; then exit 1; fi
+    printf '%s\n' '{"value":"https://youtrack.example.com"}'
+    ;;
+  "api projects/group%2Fproject/variables/YOUTRACK_QUERY")
+    printf '%s\n' '{"value":"project: APP tag: gitlab-sync"}'
+    ;;
+  "api projects/group%2Fproject/variables/YOUTRACK_TOKEN")
+    printf '%s\n' '{"value":"secret-token"}'
+    ;;
+  "api projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
   "api --paginate projects/42/issues?state=all&per_page=100")
     printf '%s\n' '[{"iid":7,"title":"Issue","description":"","labels":[],"milestone":null,"state":"opened","assignees":[]}]'
     ;;
@@ -78,21 +91,67 @@ esac
 	}
 	t.Setenv("COMMAND_LOG", commandLog)
 	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH", "")
 
-	var stdout, stderr bytes.Buffer
-	if code := run(nil, &stdout, &stderr); code != 2 {
-		t.Fatalf("exit code = %d, want 2; stderr: %s", code, stderr.String())
-	}
-	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues, 1 milestones, 1 labels, and 2 remote branches without changes") {
-		t.Fatalf("output %q does not report the complete GitLab read", output)
+	const projectReadCommands = "api --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\nfor-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
+	tests := []struct {
+		name                string
+		args                []string
+		youTrackUnavailable bool
+		code                int
+		wantOutput          string
+		wantCommandSuffix   string
+	}{
+		{
+			name:              "YouTrack config available",
+			code:              2,
+			wantOutput:        "YouTrack configuration is available",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_QUERY\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + projectReadCommands,
+		},
+		{
+			name:                "YouTrack config optional",
+			youTrackUnavailable: true,
+			code:                2,
+			wantOutput:          "YouTrack configuration is unavailable",
+			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n" + projectReadCommands,
+		},
+		{
+			name:                "maintenance requires YouTrack config",
+			args:                []string{"--maintenance"},
+			youTrackUnavailable: true,
+			code:                1,
+			wantOutput:          "Maintenance mode requires",
+			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n",
+		},
 	}
 
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\nfor-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
-	if string(commands) != wantCommands {
-		t.Fatalf("commands = %q, want %q", commands, wantCommands)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.Remove(commandLog); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if test.youTrackUnavailable {
+				t.Setenv("YOUTRACK_CONFIG_UNAVAILABLE", "true")
+			} else {
+				t.Setenv("YOUTRACK_CONFIG_UNAVAILABLE", "")
+			}
+
+			var stdout, stderr bytes.Buffer
+			if code := run(test.args, &stdout, &stderr); code != test.code {
+				t.Fatalf("exit code = %d, want %d; stderr: %s", code, test.code, stderr.String())
+			}
+			if output := stderr.String(); !strings.Contains(output, test.wantOutput) {
+				t.Fatalf("output %q does not contain %q", output, test.wantOutput)
+			}
+
+			commands, err := os.ReadFile(commandLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCommands := "repo view --output json\n" + test.wantCommandSuffix
+			if string(commands) != wantCommands {
+				t.Fatalf("commands = %q, want %q", commands, wantCommands)
+			}
+		})
 	}
 }

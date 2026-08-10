@@ -32,8 +32,9 @@ This installs runtime dependencies (`zsh`, `glab`, `fzf 0.35+`, `jq`, `curl`) an
 
 ### Go migration
 
-The production command remains the Zsh implementation. The first migration
-step provides only the existing offline help and version commands:
+The production command remains the Jira-based Zsh implementation. Go v2 is
+also replacing the team's retiring Jira source with YouTrack and is not yet a
+drop-in replacement. Offline help and version commands are available:
 
 ```bash
 go run ./cmd/glab-helper --help
@@ -43,8 +44,23 @@ go run ./cmd/glab-helper --version
 Without an offline flag, the development binary validates the current GitLab
 project, reads and validates every GitLab issue, milestone, and label without
 mutations, reads the locally available `origin` remote-tracking branches
-without fetching or pruning, and then stops. Interactive issue, branch, Jira,
-and mutation workflows still use the Zsh implementation.
+without fetching or pruning, and loads the YouTrack configuration from GitLab
+read-only without contacting YouTrack. Missing YouTrack access remains optional
+except in maintenance mode. The binary then stops; interactive workflows still
+use the Jira-based Zsh implementation.
+
+The Go version reads these CI/CD variables from the current GitLab project, or
+from the URL-encoded project selected by
+`GLAB_HELPER_YOUTRACK_PROJECT_PATH`:
+
+| Variable | Purpose |
+|---|---|
+| `YOUTRACK_URL` | Base URL of the YouTrack instance |
+| `YOUTRACK_QUERY` | YouTrack query selecting work items to synchronize |
+| `YOUTRACK_TOKEN` | Masked, read-only permanent token |
+| `YOUTRACK_TARGET_PROJECT` | Exact target GitLab `path_with_namespace` |
+
+No YouTrack request is made before migration step 09.
 
 Make sure `~/.local/bin` is in your PATH:
 
