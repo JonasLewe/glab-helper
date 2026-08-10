@@ -28,7 +28,7 @@ the stable Zsh release until the final cutover.
 - [x] 06 — Read all GitLab labels or fail without a partial result.
 - [x] 07 — Read current remote branches; keep pruning and checkout disabled.
 - [x] 08 — Load and validate the YouTrack configuration read-only.
-- [ ] 09 — Read YouTrack into a minimal provider-neutral source snapshot.
+- [x] 09 — Read YouTrack into a minimal provider-neutral source snapshot.
 - [ ] 10 — Produce the combined YouTrack-to-GitLab sync preview without writes.
 - [ ] 11 — Confirm and apply the sync plan; keep YouTrack read-only.
 - [ ] 12 — List and select an existing issue without mutations.

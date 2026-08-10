@@ -2,10 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/JonasLewe/glab-helper/internal/source"
+	"github.com/JonasLewe/glab-helper/internal/youtrack"
 )
 
 func TestOfflineCLI(t *testing.T) {
@@ -47,7 +52,7 @@ case "$*" in
     ;;
   "api projects/group%2Fproject/variables/YOUTRACK_URL")
     if [ "${YOUTRACK_CONFIG_UNAVAILABLE:-}" = true ]; then exit 1; fi
-    printf '%s\n' '{"value":"https://youtrack.example.com"}'
+    printf '{"value":"%s"}\n' "$YOUTRACK_URL"
     ;;
   "api projects/group%2Fproject/variables/YOUTRACK_QUERY")
     printf '%s\n' '{"value":"project: APP tag: gitlab-sync"}'
@@ -98,6 +103,7 @@ esac
 		name                string
 		args                []string
 		youTrackUnavailable bool
+		youTrackReadFails   bool
 		code                int
 		wantOutput          string
 		wantCommandSuffix   string
@@ -105,7 +111,7 @@ esac
 		{
 			name:              "YouTrack config available",
 			code:              2,
-			wantOutput:        "YouTrack configuration is available",
+			wantOutput:        "read 0 YouTrack work items into memory",
 			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_QUERY\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + projectReadCommands,
 		},
 		{
@@ -123,10 +129,29 @@ esac
 			wantOutput:          "Maintenance mode requires",
 			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n",
 		},
+		{
+			name:              "YouTrack read failure stops before GitLab reads",
+			youTrackReadFails: true,
+			code:              1,
+			wantOutput:        "Cannot read the complete YouTrack source snapshot",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_QUERY\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n",
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			youTrackRequests := 0
+			previousReadYouTrackSnapshot := readYouTrackSnapshot
+			readYouTrackSnapshot = func(_ context.Context, _ youtrack.Config) (source.Snapshot, error) {
+				youTrackRequests++
+				if test.youTrackReadFails {
+					return source.Snapshot{}, errors.New("later page failed")
+				}
+				return source.Snapshot{WorkItems: []source.WorkItem{}}, nil
+			}
+			defer func() { readYouTrackSnapshot = previousReadYouTrackSnapshot }()
+			t.Setenv("YOUTRACK_URL", "https://youtrack.example.com")
+
 			if err := os.Remove(commandLog); err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
@@ -151,6 +176,13 @@ esac
 			wantCommands := "repo view --output json\n" + test.wantCommandSuffix
 			if string(commands) != wantCommands {
 				t.Fatalf("commands = %q, want %q", commands, wantCommands)
+			}
+			wantYouTrackRequests := 1
+			if test.youTrackUnavailable {
+				wantYouTrackRequests = 0
+			}
+			if youTrackRequests != wantYouTrackRequests {
+				t.Fatalf("YouTrack request count = %d, want %d", youTrackRequests, wantYouTrackRequests)
 			}
 		})
 	}

@@ -44,10 +44,12 @@ go run ./cmd/glab-helper --version
 Without an offline flag, the development binary validates the current GitLab
 project, reads and validates every GitLab issue, milestone, and label without
 mutations, reads the locally available `origin` remote-tracking branches
-without fetching or pruning, and loads the YouTrack configuration from GitLab
-read-only without contacting YouTrack. Missing YouTrack access remains optional
-except in maintenance mode. The binary then stops; interactive workflows still
-use the Jira-based Zsh implementation.
+without fetching or pruning, and loads the YouTrack configuration from GitLab.
+When that configuration is available, it reads every issue selected by the
+configured query through paginated YouTrack `GET` requests into an in-memory,
+provider-neutral snapshot. Missing YouTrack access remains optional except in
+maintenance mode. The binary then stops; interactive workflows still use the
+Jira-based Zsh implementation.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by
@@ -60,7 +62,10 @@ from the URL-encoded project selected by
 | `YOUTRACK_TOKEN` | Masked, read-only permanent token |
 | `YOUTRACK_TARGET_PROJECT` | Exact target GitLab `path_with_namespace` |
 
-No YouTrack request is made before migration step 09.
+The snapshot contains the readable issue ID, title, description, resolved
+state, tags, parent ID, and the conventional YouTrack custom fields `Type`,
+`State`, and `Priority` when present. It is never written to disk, and this
+migration step performs no YouTrack or GitLab mutation.
 
 Make sure `~/.local/bin` is in your PATH:
 

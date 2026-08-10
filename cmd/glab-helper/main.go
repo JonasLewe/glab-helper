@@ -14,6 +14,8 @@ import (
 const version = "0.1.0"
 const usage = "Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version]"
 
+var readYouTrackSnapshot = youtrack.ReadSnapshot
+
 const help = `
   glab-helper — Interactive GitLab workflow helper
 
@@ -76,11 +78,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Cannot detect the current GitLab project: %v\n", err)
 		return 1
 	}
-	_, youTrackConfigErr := youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
+	youTrackConfig, youTrackConfigErr := youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
 	youTrackAvailable := youTrackConfigErr == nil
 	if maintenance && !youTrackAvailable {
 		fmt.Fprintln(stderr, "Maintenance mode requires the configured YouTrack target project.")
 		return 1
+	}
+	youTrackItemCount := 0
+	if youTrackAvailable {
+		snapshot, err := readYouTrackSnapshot(ctx, youTrackConfig)
+		if err != nil {
+			fmt.Fprintf(stderr, "Cannot read the complete YouTrack source snapshot: %v\n", err)
+			return 1
+		}
+		youTrackItemCount = len(snapshot.WorkItems)
 	}
 
 	issues, err := client.ListIssues(ctx, project.ID)
@@ -104,10 +115,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	youTrackStatus := "unavailable"
+	youTrackStatus := "YouTrack configuration is unavailable"
 	if youTrackAvailable {
-		youTrackStatus = "available"
+		youTrackStatus = fmt.Sprintf("read %d YouTrack work items into memory", youTrackItemCount)
 	}
-	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d milestones, %d labels, and %d remote branches without changes; YouTrack configuration is %s.\n", project.Path, len(issues), len(milestones), len(labels), len(branches), youTrackStatus)
+	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d milestones, %d labels, and %d remote branches without changes; %s.\n", project.Path, len(issues), len(milestones), len(labels), len(branches), youTrackStatus)
 	return 2
 }
