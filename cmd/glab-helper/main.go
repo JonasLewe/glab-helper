@@ -83,7 +83,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Cannot read all GitLab milestones for %s: %v\n", project.Path, err)
 		return 1
 	}
+	labels, err := client.ListLabels(context.Background(), project.ID)
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read all GitLab labels for %s: %v\n", project.Path, err)
+		return 1
+	}
 
-	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues and %d milestones without changes.\n", project.Path, len(issues), len(milestones))
+	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d milestones, and %d labels without changes.\n", project.Path, len(issues), len(milestones), len(labels))
 	return 2
 }

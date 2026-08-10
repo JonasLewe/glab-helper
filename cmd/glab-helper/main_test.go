@@ -50,6 +50,9 @@ case "$*" in
   "api --paginate projects/42/milestones?per_page=100")
     printf '%s\n' '[{"id":8,"title":"Milestone","description":null,"state":"active"}]'
     ;;
+  "api --paginate projects/42/labels?per_page=100")
+    printf '%s\n' '[{"id":9,"name":"team-a","color":"#5843ad"}]'
+    ;;
   *)
     exit 99
     ;;
@@ -65,7 +68,7 @@ esac
 	if code := run(nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit code = %d, want 2; stderr: %s", code, stderr.String())
 	}
-	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues and 1 milestones without changes") {
+	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues, 1 milestones, and 1 labels without changes") {
 		t.Fatalf("output %q does not report the complete GitLab read", output)
 	}
 
@@ -73,7 +76,7 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\n"
+	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\n"
 	if string(commands) != wantCommands {
 		t.Fatalf("commands = %q, want %q", commands, wantCommands)
 	}
