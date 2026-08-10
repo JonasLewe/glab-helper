@@ -5,10 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 )
-
-const issuesPerPage = 100
 
 type Issue struct {
 	IID         int64
@@ -43,7 +40,7 @@ type issueAssigneeJSON struct {
 }
 
 func (client *Client) ListIssues(ctx context.Context, projectID int64) ([]Issue, error) {
-	endpoint := fmt.Sprintf("projects/%d/issues?state=all&per_page=%d", projectID, issuesPerPage)
+	endpoint := fmt.Sprintf("projects/%d/issues?state=all&per_page=%d", projectID, maxItemsPerPage)
 	output, err := client.output(ctx, "api", "--paginate", endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("run glab issue pagination: %w", err)
@@ -57,33 +54,7 @@ func (client *Client) ListIssues(ctx context.Context, projectID int64) ([]Issue,
 }
 
 func parseIssuePages(data []byte) ([]Issue, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	issues := make([]Issue, 0)
-
-	for pageNumber := 1; ; pageNumber++ {
-		var page []json.RawMessage
-		err := decoder.Decode(&page)
-		if err == io.EOF {
-			if pageNumber == 1 {
-				return nil, fmt.Errorf("response contained no JSON pages")
-			}
-			return issues, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("page %d: %w", pageNumber, err)
-		}
-		if page == nil {
-			return nil, fmt.Errorf("page %d: expected an array", pageNumber)
-		}
-
-		for issueIndex, rawIssue := range page {
-			issue, err := parseIssue(rawIssue)
-			if err != nil {
-				return nil, fmt.Errorf("page %d issue %d: %w", pageNumber, issueIndex+1, err)
-			}
-			issues = append(issues, issue)
-		}
-	}
+	return parseArrayPages(data, "issue", parseIssue)
 }
 
 func parseIssue(data []byte) (Issue, error) {

@@ -24,7 +24,7 @@ the stable Zsh release until the final cutover.
 - [x] 02 — Preserve the existing CLI flag contract.
 - [x] 03 — Read and validate the current GitLab project without mutations.
 - [x] 04 — Read all GitLab issues or fail without a partial result.
-- [ ] 05 — Read all GitLab milestones or fail without a partial result.
+- [x] 05 — Read all GitLab milestones or fail without a partial result.
 - [ ] 06 — Read all GitLab labels or fail without a partial result.
 - [ ] 07 — Read current remote branches; keep pruning and checkout disabled.
 - [ ] 08 — Load and validate the existing Jira configuration read-only.

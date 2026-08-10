@@ -34,7 +34,7 @@ func TestOfflineCLI(t *testing.T) {
 	}
 }
 
-func TestOnlineCLIReadsAllIssues(t *testing.T) {
+func TestOnlineCLIReadsGitLabData(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	commandLog := filepath.Join(temporaryDirectory, "commands")
 	glabPath := filepath.Join(temporaryDirectory, "glab")
@@ -46,6 +46,9 @@ case "$*" in
     ;;
   "api --paginate projects/42/issues?state=all&per_page=100")
     printf '%s\n' '[{"iid":7,"title":"Issue","description":"","labels":[],"milestone":null,"state":"opened","assignees":[]}]'
+    ;;
+  "api --paginate projects/42/milestones?per_page=100")
+    printf '%s\n' '[{"id":8,"title":"Milestone","description":null,"state":"active"}]'
     ;;
   *)
     exit 99
@@ -62,15 +65,15 @@ esac
 	if code := run(nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit code = %d, want 2; stderr: %s", code, stderr.String())
 	}
-	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues without changes") {
-		t.Fatalf("output %q does not report the complete issue read", output)
+	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues and 1 milestones without changes") {
+		t.Fatalf("output %q does not report the complete GitLab read", output)
 	}
 
 	commands, err := os.ReadFile(commandLog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\n"
+	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\n"
 	if string(commands) != wantCommands {
 		t.Fatalf("commands = %q, want %q", commands, wantCommands)
 	}
