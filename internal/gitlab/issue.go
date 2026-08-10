@@ -40,7 +40,7 @@ type issueAssigneeJSON struct {
 }
 
 func (client *Client) ListIssues(ctx context.Context, projectID int64) ([]Issue, error) {
-	endpoint := fmt.Sprintf("projects/%d/issues?state=all&per_page=%d", projectID, maxItemsPerPage)
+	endpoint := fmt.Sprintf("projects/%d/issues?state=all&issue_type=issue&per_page=%d", projectID, maxItemsPerPage)
 	output, err := client.output(ctx, "api", "--paginate", endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("run glab issue pagination: %w", err)

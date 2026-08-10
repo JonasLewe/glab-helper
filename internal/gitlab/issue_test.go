@@ -20,7 +20,7 @@ func TestListIssues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantArguments := []string{"api", "--paginate", "projects/42/issues?state=all&per_page=100"}
+	wantArguments := []string{"api", "--paginate", "projects/42/issues?state=all&issue_type=issue&per_page=100"}
 	if !reflect.DeepEqual(arguments, wantArguments) {
 		t.Fatalf("glab arguments = %q, want %q", arguments, wantArguments)
 	}

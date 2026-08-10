@@ -39,17 +39,26 @@ drop-in replacement. Offline help and version commands are available:
 ```bash
 go run ./cmd/glab-helper --help
 go run ./cmd/glab-helper --version
+go run ./cmd/glab-helper --dry-run
 ```
 
-Without an offline flag, the development binary validates the current GitLab
-project, reads and validates every GitLab issue, milestone, and label without
+The normal development path validates the current GitLab
+project, reads every GitLab issue, task, milestone, and label without
 mutations, reads the locally available `origin` remote-tracking branches
 without fetching or pruning, and loads the YouTrack configuration from GitLab.
-When that configuration is available, it reads every issue selected by the
-configured query through paginated YouTrack `GET` requests into an in-memory,
-provider-neutral snapshot. Missing YouTrack access remains optional except in
-maintenance mode. The binary then stops; interactive workflows still use the
-Jira-based Zsh implementation.
+Issues are filtered explicitly to GitLab's `issue` type; tasks and their parent
+issues are read separately through the paginated work-item GraphQL API. When
+the YouTrack configuration is available, the binary reads every issue selected
+by the configured query through paginated YouTrack `GET` requests into an
+in-memory, provider-neutral snapshot. Missing YouTrack access remains optional
+except in maintenance and synchronization-preview modes. The interactive
+workflows still use the Jira-based Zsh implementation.
+
+`--dry-run` now builds and prints the combined YouTrack synchronization plan.
+The preview includes labels, milestones, issues, tasks, their configured
+relationships, field updates, forward-only closing, unchanged items, and
+ignored source levels. It returns before reading or changing branches and does
+not send any GitLab or YouTrack write request.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by
@@ -108,9 +117,20 @@ the supported sequences: `milestone`, `issue`, `milestone -> issue`,
 
 The resulting snapshot contains the readable issue ID, title, description,
 resolved state, tags, parent ID, raw YouTrack type, and normalized hierarchy
-role. It is never written to disk, and this migration step performs no YouTrack
-or GitLab mutation. A missing default project configuration or missing
-YouTrack access remains optional outside maintenance mode; a present but
+role. It is never written to disk. The preview copies YouTrack tags to GitLab
+labels and derives the scoped labels `prio::<YouTrack value>` and
+`status::<YouTrack value>`. Existing non-priority and non-status labels are
+preserved; a resolved source item may close its GitLab target, but an open
+source item never reopens a closed target.
+
+Synced descriptions receive a stable
+`<!-- glab-helper:youtrack:PROJECT-123 -->` identity marker. The first preview
+can also adopt existing milestones by title, legacy `<!-- jira:... -->`
+markers, and issues or tasks whose title starts with `[PROJECT-123]`. Ambiguous
+identities, duplicate markers, and an existing legacy identity whose GitLab
+type conflicts with the configured target stop the preview instead of creating
+a duplicate. A missing default project configuration or missing YouTrack
+access remains optional outside maintenance and preview modes; a present but
 invalid configuration is always rejected.
 
 Make sure `~/.local/bin` is in your PATH:

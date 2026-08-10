@@ -63,6 +63,11 @@ func TestOnlineCLIReadsProjectData(t *testing.T) {
 		t.Fatal(err)
 	}
 	glabStub := `#!/bin/sh
+if [ "$1 $2" = "api graphql" ]; then
+  printf '%s\n' 'api graphql tasks' >>"$COMMAND_LOG"
+  printf '%s\n' '{"data":{"namespace":{"workItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+  exit 0
+fi
 printf '%s\n' "$*" >>"$COMMAND_LOG"
 case "$*" in
   "repo view --output json")
@@ -78,7 +83,7 @@ case "$*" in
   "api projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT")
     printf '%s\n' '{"value":"group/project"}'
     ;;
-  "api --paginate projects/42/issues?state=all&per_page=100")
+  "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100")
     printf '%s\n' '[{"iid":7,"title":"Issue","description":"","labels":[],"milestone":null,"state":"opened","assignees":[]}]'
     ;;
   "api --paginate projects/42/milestones?per_page=100")
@@ -113,7 +118,8 @@ esac
 	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH", "")
 
-	const projectReadCommands = "api --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\nfor-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
+	const gitLabSnapshotCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\n"
+	const projectReadCommands = gitLabSnapshotCommands + "for-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
 	tests := []struct {
 		name                 string
 		args                 []string
@@ -129,6 +135,13 @@ esac
 			code:              2,
 			wantOutput:        "read 0 YouTrack work items into memory",
 			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + projectReadCommands,
+		},
+		{
+			name:              "read-only combined preview",
+			args:              []string{"--dry-run"},
+			code:              0,
+			wantOutput:        "No GitLab or YouTrack changes were applied",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + gitLabSnapshotCommands,
 		},
 		{
 			name:                "YouTrack config optional",
@@ -193,7 +206,7 @@ esac
 			if code := run(test.args, &stdout, &stderr); code != test.code {
 				t.Fatalf("exit code = %d, want %d; stderr: %s", code, test.code, stderr.String())
 			}
-			if output := stderr.String(); !strings.Contains(output, test.wantOutput) {
+			if output := stdout.String() + stderr.String(); !strings.Contains(output, test.wantOutput) {
 				t.Fatalf("output %q does not contain %q", output, test.wantOutput)
 			}
 

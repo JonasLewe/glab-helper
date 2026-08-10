@@ -34,7 +34,7 @@ the stable Zsh release until the final cutover.
 - [x] 08 — Load and validate the YouTrack configuration read-only.
 - [x] 09 — Read and validate a configurable YouTrack hierarchy into a minimal
   provider-neutral source snapshot.
-- [ ] 10 — Preview the combined milestone/issue/task synchronization without
+- [x] 10 — Preview the combined milestone/issue/task synchronization without
   writes.
 - [ ] 11 — Confirm and apply the sync plan; keep YouTrack read-only.
 - [ ] 12 — List and select an existing issue or task without mutations.
