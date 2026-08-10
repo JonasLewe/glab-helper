@@ -145,8 +145,11 @@ func (config Config) Validate() error {
 		if !exists {
 			return fmt.Errorf("gitlab.targets is missing role %q", level.Role)
 		}
-		if target != "milestone" && target != "issue" && target != "task" {
+		if target != "ignore" && target != "milestone" && target != "issue" && target != "task" {
 			return fmt.Errorf("gitlab.targets role %q has unsupported Community Edition target %q", level.Role, target)
+		}
+		if target == "ignore" {
+			continue
 		}
 		if _, exists := seenTargets[target]; exists {
 			return fmt.Errorf("GitLab target %q is assigned more than once", target)
@@ -158,6 +161,9 @@ func (config Config) Validate() error {
 		if _, exists := seenRoles[role]; !exists {
 			return fmt.Errorf("gitlab.targets contains unknown role %q", role)
 		}
+	}
+	if len(targetSequence) == 0 {
+		return fmt.Errorf("gitlab.targets must synchronize at least one hierarchy role")
 	}
 	if err := validateCommunityEditionHierarchy(targetSequence); err != nil {
 		return err
@@ -175,6 +181,11 @@ func (config Config) RoleForKind(kind string) (string, int, bool) {
 		}
 	}
 	return "", 0, false
+}
+
+func (config Config) TargetForRole(role string) (string, bool) {
+	target, found := config.GitLab.Targets[role]
+	return target, found
 }
 
 func validRole(role string) bool {

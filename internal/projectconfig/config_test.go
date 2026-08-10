@@ -77,3 +77,42 @@ func TestValidateRejectsUnsupportedCommunityEditionHierarchy(t *testing.T) {
 		t.Fatalf("error = %v, want duplicate target rejection", err)
 	}
 }
+
+func TestValidateAllowsIgnoredSourceLevels(t *testing.T) {
+	config := Config{
+		Version: 1,
+		YouTrack: YouTrack{
+			Query:  "project: APP",
+			Fields: YouTrackFields{Kind: "Type", Status: "State", Priority: "Priority"},
+			Hierarchy: []HierarchyLevel{
+				{Role: "epic", Types: []string{"Epic"}},
+				{Role: "feature", Types: []string{"Feature"}},
+				{Role: "story", Types: []string{"User Story"}},
+			},
+		},
+		GitLab: GitLab{Targets: map[string]string{"epic": "ignore", "feature": "milestone", "story": "issue"}},
+	}
+
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if target, found := config.TargetForRole("epic"); !found || target != "ignore" {
+		t.Fatalf("TargetForRole = %q, %t; want ignore, true", target, found)
+	}
+}
+
+func TestValidateRejectsAllIgnoredSourceLevels(t *testing.T) {
+	config := Config{
+		Version: 1,
+		YouTrack: YouTrack{
+			Query:     "project: APP",
+			Fields:    YouTrackFields{Kind: "Type", Status: "State", Priority: "Priority"},
+			Hierarchy: []HierarchyLevel{{Role: "epic", Types: []string{"Epic"}}},
+		},
+		GitLab: GitLab{Targets: map[string]string{"epic": "ignore"}},
+	}
+
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("error = %v, want all-ignored rejection", err)
+	}
+}

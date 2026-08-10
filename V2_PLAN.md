@@ -11,7 +11,8 @@ the stable Zsh release until the final cutover.
   replaced by the concrete YouTrack setup used by the team.
 - Target GitLab Community Edition 19.2.1. Represent the configured three-level
   source hierarchy as milestone -> issue -> task without relying on paid epics
-  or configurable work item types.
+  or configurable work item types. Allow source levels to be ignored while
+  preserving validation of the complete YouTrack parent chain.
 - Prefer the Go standard library. Keep `glab` and `fzf` until replacing either
   one produces a clear user benefit.
 - YouTrack remains a strictly read-only source.

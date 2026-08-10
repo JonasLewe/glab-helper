@@ -86,6 +86,26 @@ non-root YouTrack item must reference an item from the preceding hierarchy
 level that is also selected by the query. The complete read fails on unknown
 types, missing parents, or invalid target mappings.
 
+Set a role's GitLab target to `ignore` to validate its YouTrack items and
+relationships without synchronizing that level. Target validation removes all
+ignored roles before checking the remaining Community Edition hierarchy. For
+example, this keeps the complete Epic -> Feature -> Story source tree while
+syncing only features as milestones and stories as issues:
+
+```json
+"gitlab": {
+  "targets": {
+    "epic": "ignore",
+    "feature": "milestone",
+    "story": "issue"
+  }
+}
+```
+
+At least one role must be synchronized. Non-ignored targets must form one of
+the supported sequences: `milestone`, `issue`, `milestone -> issue`,
+`issue -> task`, or `milestone -> issue -> task`.
+
 The resulting snapshot contains the readable issue ID, title, description,
 resolved state, tags, parent ID, raw YouTrack type, and normalized hierarchy
 role. It is never written to disk, and this migration step performs no YouTrack
