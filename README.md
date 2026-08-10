@@ -42,8 +42,9 @@ go run ./cmd/glab-helper --version
 
 Without an offline flag, the development binary validates the current GitLab
 project, reads and validates every GitLab issue, milestone, and label without
-mutations, and then stops. Interactive issue, branch, Jira, and mutation
-workflows still use the Zsh implementation.
+mutations, reads the locally available `origin` remote-tracking branches
+without fetching or pruning, and then stops. Interactive issue, branch, Jira,
+and mutation workflows still use the Zsh implementation.
 
 Make sure `~/.local/bin` is in your PATH:
 

@@ -26,7 +26,7 @@ the stable Zsh release until the final cutover.
 - [x] 04 — Read all GitLab issues or fail without a partial result.
 - [x] 05 — Read all GitLab milestones or fail without a partial result.
 - [x] 06 — Read all GitLab labels or fail without a partial result.
-- [ ] 07 — Read current remote branches; keep pruning and checkout disabled.
+- [x] 07 — Read current remote branches; keep pruning and checkout disabled.
 - [ ] 08 — Load and validate the existing Jira configuration read-only.
 - [ ] 09 — Read Jira into a minimal provider-neutral source snapshot.
 - [ ] 10 — Produce the combined Jira-to-GitLab sync preview without writes.

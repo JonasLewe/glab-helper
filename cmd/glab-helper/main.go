@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	gitrepo "github.com/JonasLewe/glab-helper/internal/git"
 	"github.com/JonasLewe/glab-helper/internal/gitlab"
 )
 
@@ -88,7 +89,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Cannot read all GitLab labels for %s: %v\n", project.Path, err)
 		return 1
 	}
+	branches, err := gitrepo.NewClient().ListRemoteBranches(context.Background())
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read current remote branches for %s: %v\n", project.Path, err)
+		return 1
+	}
 
-	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d milestones, and %d labels without changes.\n", project.Path, len(issues), len(milestones), len(labels))
+	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d milestones, %d labels, and %d remote branches without changes.\n", project.Path, len(issues), len(milestones), len(labels), len(branches))
 	return 2
 }

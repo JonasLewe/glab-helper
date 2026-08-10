@@ -34,10 +34,11 @@ func TestOfflineCLI(t *testing.T) {
 	}
 }
 
-func TestOnlineCLIReadsGitLabData(t *testing.T) {
+func TestOnlineCLIReadsProjectData(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	commandLog := filepath.Join(temporaryDirectory, "commands")
 	glabPath := filepath.Join(temporaryDirectory, "glab")
+	gitPath := filepath.Join(temporaryDirectory, "git")
 	glabStub := `#!/bin/sh
 printf '%s\n' "$*" >>"$COMMAND_LOG"
 case "$*" in
@@ -61,6 +62,20 @@ esac
 	if err := os.WriteFile(glabPath, []byte(glabStub), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	gitStub := `#!/bin/sh
+printf '%s\n' "$*" >>"$COMMAND_LOG"
+case "$*" in
+  "for-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/")
+    printf 'feature/new\0\nHEAD\0refs/remotes/origin/main\nmain\0\n'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	if err := os.WriteFile(gitPath, []byte(gitStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("COMMAND_LOG", commandLog)
 	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -68,7 +83,7 @@ esac
 	if code := run(nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit code = %d, want 2; stderr: %s", code, stderr.String())
 	}
-	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues, 1 milestones, and 1 labels without changes") {
+	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues, 1 milestones, 1 labels, and 2 remote branches without changes") {
 		t.Fatalf("output %q does not report the complete GitLab read", output)
 	}
 
@@ -76,7 +91,7 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\n"
+	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\nfor-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
 	if string(commands) != wantCommands {
 		t.Fatalf("commands = %q, want %q", commands, wantCommands)
 	}
