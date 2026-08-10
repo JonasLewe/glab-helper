@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -18,11 +17,10 @@ const taskQuery = `query ProjectTasks($fullPath: ID!, $after: String) {
         title
         description
         state
-        workItemType { name }
         widgets {
           __typename
           ... on WorkItemWidgetHierarchy {
-            parent { id iid }
+            parent { iid }
           }
           ... on WorkItemWidgetLabels {
             labels(first: 100) {
@@ -47,21 +45,10 @@ type Task struct {
 	ParentIID   int64
 }
 
-type taskResponseJSON struct {
-	Data   json.RawMessage `json:"data"`
-	Errors []taskErrorJSON `json:"errors"`
-}
-
-type taskErrorJSON struct {
-	Message string `json:"message"`
-}
-
-type taskDataJSON struct {
-	Namespace json.RawMessage `json:"namespace"`
-}
-
-type taskNamespaceJSON struct {
-	WorkItems *taskConnectionJSON `json:"workItems"`
+type taskPageJSON struct {
+	Namespace *struct {
+		WorkItems *taskConnectionJSON `json:"workItems"`
+	} `json:"namespace"`
 }
 
 type taskConnectionJSON struct {
@@ -75,17 +62,12 @@ type taskPageInfoJSON struct {
 }
 
 type taskJSON struct {
-	ID           *string           `json:"id"`
-	IID          json.RawMessage   `json:"iid"`
-	Title        *string           `json:"title"`
-	Description  json.RawMessage   `json:"description"`
-	State        *string           `json:"state"`
-	WorkItemType *taskTypeJSON     `json:"workItemType"`
-	Widgets      *[]taskWidgetJSON `json:"widgets"`
-}
-
-type taskTypeJSON struct {
-	Name *string `json:"name"`
+	ID          *string           `json:"id"`
+	IID         json.RawMessage   `json:"iid"`
+	Title       *string           `json:"title"`
+	Description json.RawMessage   `json:"description"`
+	State       *string           `json:"state"`
+	Widgets     *[]taskWidgetJSON `json:"widgets"`
 }
 
 type taskWidgetJSON struct {
@@ -95,7 +77,6 @@ type taskWidgetJSON struct {
 }
 
 type taskParentJSON struct {
-	ID  *string         `json:"id"`
 	IID json.RawMessage `json:"iid"`
 }
 
@@ -113,12 +94,7 @@ type taskLabelJSON struct {
 }
 
 func (client *Client) ListTasks(ctx context.Context, projectPath string) ([]Task, error) {
-	if strings.TrimSpace(projectPath) == "" {
-		return nil, fmt.Errorf("GitLab project path must not be empty")
-	}
-
 	tasks := make([]Task, 0)
-	seenIDs := make(map[string]struct{})
 	seenIIDs := make(map[int64]struct{})
 	seenCursors := make(map[string]struct{})
 	after := ""
@@ -137,13 +113,9 @@ func (client *Client) ListTasks(ctx context.Context, projectPath string) ([]Task
 			return nil, fmt.Errorf("decode GitLab task page %d: %w", page, err)
 		}
 		for _, task := range pageTasks {
-			if _, exists := seenIDs[task.ID]; exists {
-				return nil, fmt.Errorf("duplicate GitLab task %q across pages", task.ID)
-			}
 			if _, exists := seenIIDs[task.IID]; exists {
 				return nil, fmt.Errorf("duplicate GitLab task IID #%d across pages", task.IID)
 			}
-			seenIDs[task.ID] = struct{}{}
 			seenIIDs[task.IID] = struct{}{}
 			tasks = append(tasks, task)
 		}
@@ -167,51 +139,29 @@ type taskPageInfo struct {
 }
 
 func parseTaskPage(data []byte) ([]Task, taskPageInfo, error) {
-	var response taskResponseJSON
-	if err := json.Unmarshal(data, &response); err != nil {
+	response, err := decodeGraphQL[taskPageJSON](data)
+	if err != nil {
 		return nil, taskPageInfo{}, err
 	}
-	if len(response.Errors) > 0 {
-		messages := make([]string, 0, len(response.Errors))
-		for _, graphQLError := range response.Errors {
-			if strings.TrimSpace(graphQLError.Message) == "" {
-				messages = append(messages, "unknown GraphQL error")
-			} else {
-				messages = append(messages, graphQLError.Message)
-			}
-		}
-		return nil, taskPageInfo{}, fmt.Errorf("GraphQL errors: %s", strings.Join(messages, "; "))
-	}
-	if response.Data == nil {
-		return nil, taskPageInfo{}, fmt.Errorf("missing field %q", "data")
-	}
-
-	var responseData taskDataJSON
-	if err := json.Unmarshal(response.Data, &responseData); err != nil {
-		return nil, taskPageInfo{}, fmt.Errorf("field %q: %w", "data", err)
-	}
-	if responseData.Namespace == nil || bytes.Equal(responseData.Namespace, []byte("null")) {
+	if response.Namespace == nil {
 		return nil, taskPageInfo{}, fmt.Errorf("missing GitLab namespace")
 	}
-	var namespace taskNamespaceJSON
-	if err := json.Unmarshal(responseData.Namespace, &namespace); err != nil {
-		return nil, taskPageInfo{}, fmt.Errorf("field %q: %w", "namespace", err)
-	}
-	if namespace.WorkItems == nil || namespace.WorkItems.Nodes == nil || namespace.WorkItems.PageInfo == nil {
+	workItems := response.Namespace.WorkItems
+	if workItems == nil || workItems.Nodes == nil || workItems.PageInfo == nil {
 		return nil, taskPageInfo{}, fmt.Errorf("incomplete work item connection")
 	}
-	if namespace.WorkItems.PageInfo.HasNextPage == nil || namespace.WorkItems.PageInfo.EndCursor == nil {
+	if workItems.PageInfo.HasNextPage == nil || workItems.PageInfo.EndCursor == nil {
 		return nil, taskPageInfo{}, fmt.Errorf("incomplete work item page info")
 	}
 
-	pageInfo := taskPageInfo{HasNextPage: *namespace.WorkItems.PageInfo.HasNextPage}
-	if !bytes.Equal(namespace.WorkItems.PageInfo.EndCursor, []byte("null")) {
-		if err := json.Unmarshal(namespace.WorkItems.PageInfo.EndCursor, &pageInfo.EndCursor); err != nil {
+	pageInfo := taskPageInfo{HasNextPage: *workItems.PageInfo.HasNextPage}
+	if !bytes.Equal(workItems.PageInfo.EndCursor, []byte("null")) {
+		if err := json.Unmarshal(workItems.PageInfo.EndCursor, &pageInfo.EndCursor); err != nil {
 			return nil, taskPageInfo{}, fmt.Errorf("field %q: %w", "endCursor", err)
 		}
 	}
-	tasks := make([]Task, 0, len(*namespace.WorkItems.Nodes))
-	for index, value := range *namespace.WorkItems.Nodes {
+	tasks := make([]Task, 0, len(*workItems.Nodes))
+	for index, value := range *workItems.Nodes {
 		task, err := parseTask(value)
 		if err != nil {
 			return nil, taskPageInfo{}, fmt.Errorf("task %d: %w", index+1, err)
@@ -238,9 +188,6 @@ func parseTask(value taskJSON) (Task, error) {
 	if value.State == nil {
 		return Task{}, fmt.Errorf("missing or invalid field %q", "state")
 	}
-	if value.WorkItemType == nil || value.WorkItemType.Name == nil || !strings.EqualFold(*value.WorkItemType.Name, "Task") {
-		return Task{}, fmt.Errorf("missing or invalid task work item type")
-	}
 	if value.Widgets == nil {
 		return Task{}, fmt.Errorf("field %q must be an array", "widgets")
 	}
@@ -258,9 +205,6 @@ func parseTask(value taskJSON) (Task, error) {
 		}
 		switch *widget.Type {
 		case "WorkItemWidgetHierarchy":
-			if foundHierarchy {
-				return Task{}, fmt.Errorf("duplicate hierarchy widget")
-			}
 			foundHierarchy = true
 			if widget.Parent == nil {
 				return Task{}, fmt.Errorf("hierarchy widget is missing parent")
@@ -270,18 +214,12 @@ func parseTask(value taskJSON) (Task, error) {
 				if err := json.Unmarshal(widget.Parent, &parent); err != nil {
 					return Task{}, fmt.Errorf("hierarchy parent: %w", err)
 				}
-				if parent.ID == nil || strings.TrimSpace(*parent.ID) == "" {
-					return Task{}, fmt.Errorf("hierarchy parent has no valid ID")
-				}
 				task.ParentIID, err = parseGraphQLIID(parent.IID)
 				if err != nil {
 					return Task{}, fmt.Errorf("hierarchy parent IID: %w", err)
 				}
 			}
 		case "WorkItemWidgetLabels":
-			if foundLabels {
-				return Task{}, fmt.Errorf("duplicate labels widget")
-			}
 			foundLabels = true
 			if widget.Labels == nil || widget.Labels.Nodes == nil || widget.Labels.PageInfo == nil || widget.Labels.PageInfo.HasNextPage == nil {
 				return Task{}, fmt.Errorf("labels widget has no labels array")
@@ -302,23 +240,4 @@ func parseTask(value taskJSON) (Task, error) {
 		return Task{}, fmt.Errorf("task is missing hierarchy or labels widget")
 	}
 	return task, nil
-}
-
-func parseGraphQLIID(data []byte) (int64, error) {
-	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
-		return 0, fmt.Errorf("missing value")
-	}
-	var text string
-	if data[0] == '"' {
-		if err := json.Unmarshal(data, &text); err != nil {
-			return 0, err
-		}
-	} else {
-		text = string(data)
-	}
-	iid, err := strconv.ParseInt(text, 10, 64)
-	if err != nil || iid < 1 {
-		return 0, fmt.Errorf("must be a positive integer")
-	}
-	return iid, nil
 }

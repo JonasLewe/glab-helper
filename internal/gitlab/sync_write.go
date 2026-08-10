@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -50,6 +49,15 @@ type CreatedIssue struct {
 type WorkItemReference struct {
 	ID  string
 	IID int64
+}
+
+type workItemQueryJSON struct {
+	Namespace *struct {
+		WorkItem      *workItemJSON `json:"workItem"`
+		WorkItemTypes *struct {
+			Nodes *[]workItemTypeJSON `json:"nodes"`
+		} `json:"workItemTypes"`
+	} `json:"namespace"`
 }
 
 func (client *Client) CreateLabel(ctx context.Context, projectID int64, name string) error {
@@ -164,37 +172,16 @@ func (client *Client) WorkItemID(ctx context.Context, projectPath string, iid in
 		return "", fmt.Errorf("query GitLab %s #%d work item ID: %w", expectedType, iid, err)
 	}
 
-	var response struct {
-		Data struct {
-			Namespace json.RawMessage `json:"namespace"`
-		} `json:"data"`
-		Errors []taskErrorJSON `json:"errors"`
-	}
-	if err := json.Unmarshal(output, &response); err != nil {
+	response, err := decodeGraphQL[workItemQueryJSON](output)
+	if err != nil {
 		return "", fmt.Errorf("decode GitLab %s #%d work item ID: %w", expectedType, iid, err)
 	}
-	if err := graphQLErrors(response.Errors); err != nil {
-		return "", err
-	}
-	if response.Data.Namespace == nil || bytes.Equal(response.Data.Namespace, []byte("null")) {
+	if response.Namespace == nil {
 		return "", fmt.Errorf("GitLab namespace %q was not found", projectPath)
 	}
-	var namespace struct {
-		WorkItem json.RawMessage `json:"workItem"`
-	}
-	if err := json.Unmarshal(response.Data.Namespace, &namespace); err != nil {
-		return "", fmt.Errorf("decode GitLab namespace: %w", err)
-	}
-	if namespace.WorkItem == nil || bytes.Equal(namespace.WorkItem, []byte("null")) {
+	workItem := response.Namespace.WorkItem
+	if workItem == nil {
 		return "", fmt.Errorf("GitLab %s #%d work item was not found", expectedType, iid)
-	}
-	var workItem struct {
-		ID           *string         `json:"id"`
-		IID          json.RawMessage `json:"iid"`
-		WorkItemType *taskTypeJSON   `json:"workItemType"`
-	}
-	if err := json.Unmarshal(namespace.WorkItem, &workItem); err != nil {
-		return "", fmt.Errorf("decode GitLab work item: %w", err)
 	}
 	parsedIID, err := parseGraphQLIID(workItem.IID)
 	if err != nil || parsedIID != iid {
@@ -218,36 +205,18 @@ func (client *Client) TaskTypeID(ctx context.Context, projectPath string) (strin
 	if err != nil {
 		return "", fmt.Errorf("query GitLab task work item type: %w", err)
 	}
-	var response struct {
-		Data struct {
-			Namespace json.RawMessage `json:"namespace"`
-		} `json:"data"`
-		Errors []taskErrorJSON `json:"errors"`
-	}
-	if err := json.Unmarshal(output, &response); err != nil {
+	response, err := decodeGraphQL[workItemQueryJSON](output)
+	if err != nil {
 		return "", fmt.Errorf("decode GitLab task work item type: %w", err)
 	}
-	if err := graphQLErrors(response.Errors); err != nil {
-		return "", err
-	}
-	if response.Data.Namespace == nil || bytes.Equal(response.Data.Namespace, []byte("null")) {
+	if response.Namespace == nil {
 		return "", fmt.Errorf("GitLab namespace %q was not found", projectPath)
 	}
-	var namespace struct {
-		WorkItemTypes *struct {
-			Nodes *[]struct {
-				ID   *string `json:"id"`
-				Name *string `json:"name"`
-			} `json:"nodes"`
-		} `json:"workItemTypes"`
-	}
-	if err := json.Unmarshal(response.Data.Namespace, &namespace); err != nil {
-		return "", fmt.Errorf("decode GitLab task work item type: %w", err)
-	}
-	if namespace.WorkItemTypes == nil || namespace.WorkItemTypes.Nodes == nil || len(*namespace.WorkItemTypes.Nodes) != 1 {
+	workItemTypes := response.Namespace.WorkItemTypes
+	if workItemTypes == nil || workItemTypes.Nodes == nil || len(*workItemTypes.Nodes) != 1 {
 		return "", fmt.Errorf("expected exactly one GitLab task work item type")
 	}
-	taskType := (*namespace.WorkItemTypes.Nodes)[0]
+	taskType := (*workItemTypes.Nodes)[0]
 	if taskType.ID == nil || strings.TrimSpace(*taskType.ID) == "" || taskType.Name == nil || !strings.EqualFold(*taskType.Name, "Task") {
 		return "", fmt.Errorf("GitLab task work item type is incomplete")
 	}
@@ -310,41 +279,31 @@ func (client *Client) SetWorkItemParent(ctx context.Context, taskID, parentID st
 }
 
 func parseWorkItemMutation(data []byte, field, expectedType string) (WorkItemReference, error) {
-	var response struct {
-		Data   map[string]json.RawMessage `json:"data"`
-		Errors []taskErrorJSON            `json:"errors"`
-	}
-	if err := json.Unmarshal(data, &response); err != nil {
+	response, err := decodeGraphQL[map[string]json.RawMessage](data)
+	if err != nil {
 		return WorkItemReference{}, err
 	}
-	if err := graphQLErrors(response.Errors); err != nil {
-		return WorkItemReference{}, err
-	}
-	payloadJSON, exists := response.Data[field]
-	if !exists || bytes.Equal(payloadJSON, []byte("null")) {
+	payloadJSON, exists := (*response)[field]
+	if !exists {
 		return WorkItemReference{}, fmt.Errorf("GraphQL response is missing %s", field)
 	}
-	var payload struct {
-		WorkItem json.RawMessage `json:"workItem"`
-		Errors   []string        `json:"errors"`
+	var payload *struct {
+		WorkItem *workItemJSON `json:"workItem"`
+		Errors   []string      `json:"errors"`
 	}
-	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil || payload == nil {
+		if err == nil {
+			err = fmt.Errorf("GraphQL response is missing %s", field)
+		}
 		return WorkItemReference{}, err
 	}
 	if len(payload.Errors) > 0 {
 		return WorkItemReference{}, fmt.Errorf("GraphQL mutation errors: %s", strings.Join(payload.Errors, "; "))
 	}
-	if payload.WorkItem == nil || bytes.Equal(payload.WorkItem, []byte("null")) {
+	if payload.WorkItem == nil {
 		return WorkItemReference{}, fmt.Errorf("GraphQL mutation returned no work item")
 	}
-	var workItem struct {
-		ID           *string         `json:"id"`
-		IID          json.RawMessage `json:"iid"`
-		WorkItemType *taskTypeJSON   `json:"workItemType"`
-	}
-	if err := json.Unmarshal(payload.WorkItem, &workItem); err != nil {
-		return WorkItemReference{}, err
-	}
+	workItem := payload.WorkItem
 	if workItem.ID == nil || strings.TrimSpace(*workItem.ID) == "" {
 		return WorkItemReference{}, fmt.Errorf("GraphQL mutation returned no work item ID")
 	}
@@ -365,19 +324,4 @@ func parseWorkItemMutation(data []byte, field, expectedType string) (WorkItemRef
 		}
 	}
 	return reference, nil
-}
-
-func graphQLErrors(errors []taskErrorJSON) error {
-	if len(errors) == 0 {
-		return nil
-	}
-	messages := make([]string, 0, len(errors))
-	for _, graphQLError := range errors {
-		message := strings.TrimSpace(graphQLError.Message)
-		if message == "" {
-			message = "unknown GraphQL error"
-		}
-		messages = append(messages, message)
-	}
-	return fmt.Errorf("GraphQL errors: %s", strings.Join(messages, "; "))
 }

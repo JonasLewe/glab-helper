@@ -34,9 +34,9 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	role, level, found := config.RoleForKind("user story")
-	if !found || role != "story" || level != 2 {
-		t.Fatalf("RoleForKind = %q, %d, %t; want story, 2, true", role, level, found)
+	role, found := config.RoleForKind("user story")
+	if !found || role != "story" {
+		t.Fatalf("RoleForKind = %q, %t; want story, true", role, found)
 	}
 }
 
@@ -73,8 +73,8 @@ func TestValidateRejectsUnsupportedCommunityEditionHierarchy(t *testing.T) {
 		GitLab: GitLab{Targets: map[string]string{"feature": "issue", "story": "issue"}},
 	}
 
-	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "assigned more than once") {
-		t.Fatalf("error = %v, want duplicate target rejection", err)
+	if err := config.Validate(); err == nil {
+		t.Fatal("duplicate GitLab target was accepted")
 	}
 }
 

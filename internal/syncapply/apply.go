@@ -173,24 +173,6 @@ func hasChangeOtherThan(action syncplan.Action, field string) bool {
 func validatePlan(plan syncplan.Plan) error {
 	available := make(map[string]syncplan.Target, len(plan.References))
 	for sourceID, reference := range plan.References {
-		if sourceID == "" || (reference.Target != syncplan.Milestone && reference.Target != syncplan.Issue && reference.Target != syncplan.Task) {
-			return fmt.Errorf("invalid existing reference for %q", sourceID)
-		}
-		switch reference.Target {
-		case syncplan.Milestone:
-			milestoneID, err := strconv.ParseInt(reference.ID, 10, 64)
-			if err != nil || milestoneID < 1 {
-				return fmt.Errorf("existing milestone reference for %q has invalid ID", sourceID)
-			}
-		case syncplan.Issue:
-			if reference.IID < 1 {
-				return fmt.Errorf("existing issue reference for %q has invalid IID", sourceID)
-			}
-		case syncplan.Task:
-			if reference.IID < 1 || reference.ID == "" {
-				return fmt.Errorf("existing task reference for %q is incomplete", sourceID)
-			}
-		}
 		available[sourceID] = reference.Target
 	}
 	seenActions := make(map[string]struct{})
@@ -214,40 +196,19 @@ func validatePlan(plan syncplan.Plan) error {
 			return fmt.Errorf("source %q has multiple actions", action.Desired.SourceID)
 		}
 		seenActions[action.Desired.SourceID] = struct{}{}
-		if action.Desired.Target == syncplan.Milestone && action.Desired.ParentSourceID != "" {
-			return fmt.Errorf("milestone source %q has a parent", action.Desired.SourceID)
+		expectedParent := syncplan.Target("")
+		switch action.Desired.Target {
+		case syncplan.Issue:
+			expectedParent = syncplan.Milestone
+		case syncplan.Task:
+			expectedParent = syncplan.Issue
 		}
-		if action.Desired.Target == syncplan.Task && action.Desired.ParentSourceID == "" {
+		parent := action.Desired.ParentSourceID
+		if action.Desired.Target == syncplan.Task && parent == "" {
 			return fmt.Errorf("task source %q has no issue parent", action.Desired.SourceID)
 		}
-		if action.Desired.ParentSourceID != "" {
-			parentTarget, exists := available[action.Desired.ParentSourceID]
-			expectedTarget := syncplan.Milestone
-			if action.Desired.Target == syncplan.Task {
-				expectedTarget = syncplan.Issue
-			}
-			if !exists || parentTarget != expectedTarget {
-				return fmt.Errorf("source %q parent %q is not an available %s", action.Desired.SourceID, action.Desired.ParentSourceID, expectedTarget)
-			}
-		}
-		if action.Operation == syncplan.Update {
-			reference, exists := plan.References[action.Desired.SourceID]
-			if !exists || reference.Target != action.Desired.Target {
-				return fmt.Errorf("update for source %q has no matching existing reference", action.Desired.SourceID)
-			}
-			switch action.Desired.Target {
-			case syncplan.Milestone:
-				milestoneID, err := strconv.ParseInt(action.CurrentID, 10, 64)
-				if err != nil || milestoneID < 1 {
-					return fmt.Errorf("update for source %q has invalid milestone ID", action.Desired.SourceID)
-				}
-			case syncplan.Issue, syncplan.Task:
-				if action.CurrentIID < 1 {
-					return fmt.Errorf("update for source %q has invalid IID", action.Desired.SourceID)
-				}
-			}
-		} else if _, exists := plan.References[action.Desired.SourceID]; exists {
-			return fmt.Errorf("create for source %q already has an existing reference", action.Desired.SourceID)
+		if parent != "" && available[parent] != expectedParent {
+			return fmt.Errorf("source %q parent %q is not an available %s", action.Desired.SourceID, parent, expectedParent)
 		}
 		available[action.Desired.SourceID] = action.Desired.Target
 	}

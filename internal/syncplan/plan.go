@@ -85,12 +85,13 @@ type existingItem struct {
 }
 
 func Build(snapshot source.Snapshot, config projectconfig.Config, current Current) (Plan, error) {
-	if err := config.Validate(); err != nil {
-		return Plan{}, fmt.Errorf("invalid project configuration: %w", err)
+	itemsByID := make(map[string]source.WorkItem, len(snapshot.WorkItems))
+	for _, item := range snapshot.WorkItems {
+		itemsByID[item.ID] = item
 	}
-	itemsByID, levelsByRole, err := validateSourceSnapshot(snapshot, config)
-	if err != nil {
-		return Plan{}, err
+	levelsByRole := make(map[string]int, len(config.YouTrack.Hierarchy))
+	for index, level := range config.YouTrack.Hierarchy {
+		levelsByRole[level.Role] = index
 	}
 
 	desired := make([]DesiredItem, 0, len(snapshot.WorkItems))
@@ -101,11 +102,7 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 			ignored++
 			continue
 		}
-		desiredItem, err := makeDesiredItem(item, Target(target), itemsByID, config)
-		if err != nil {
-			return Plan{}, err
-		}
-		desired = append(desired, desiredItem)
+		desired = append(desired, makeDesiredItem(item, Target(target), itemsByID, config))
 	}
 	sort.Slice(desired, func(left, right int) bool {
 		leftRole := itemsByID[desired[left].SourceID].Role
@@ -121,26 +118,32 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 	if err != nil {
 		return Plan{}, err
 	}
-	matched := make(map[string]string)
+	matches := make(map[string]existingItem, len(desired))
+	matched := make(map[string]string, len(desired))
 	existingIssuesBySource := make(map[string]existingItem)
 	for _, desiredItem := range desired {
 		candidate, found, err := findExisting(desiredItem, existing, markers)
 		if err != nil {
 			return Plan{}, err
 		}
-		if !found || desiredItem.Target != Issue {
+		if !found {
 			continue
 		}
-		existingIssuesBySource[desiredItem.SourceID] = candidate
+		identity := candidate.target.String() + ":" + candidate.id
+		if previous, exists := matched[identity]; exists {
+			return Plan{}, fmt.Errorf("GitLab %s %s matches both YouTrack %q and %q", candidate.target, candidate.reference(), previous, desiredItem.SourceID)
+		}
+		matched[identity] = desiredItem.SourceID
+		matches[desiredItem.SourceID] = candidate
+		if desiredItem.Target == Issue {
+			existingIssuesBySource[desiredItem.SourceID] = candidate
+		}
 	}
 
 	plan := Plan{Ignored: ignored, References: make(map[string]Reference)}
 	neededLabels := make(map[string]struct{})
 	for _, desiredItem := range desired {
-		candidate, found, err := findExisting(desiredItem, existing, markers)
-		if err != nil {
-			return Plan{}, err
-		}
+		candidate, found := matches[desiredItem.SourceID]
 		for _, label := range desiredItem.Labels {
 			neededLabels[label] = struct{}{}
 		}
@@ -151,11 +154,6 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 		if desiredItem.Target == Issue || desiredItem.Target == Task {
 			desiredItem.Labels = mergeManagedLabels(candidate.labels, desiredItem.Labels)
 		}
-		identity := candidate.target.String() + ":" + candidate.id
-		if previous, exists := matched[identity]; exists {
-			return Plan{}, fmt.Errorf("GitLab %s %s matches both YouTrack %q and %q", candidate.target, candidate.reference(), previous, desiredItem.SourceID)
-		}
-		matched[identity] = desiredItem.SourceID
 		plan.References[desiredItem.SourceID] = Reference{
 			Target: candidate.target,
 			ID:     candidate.id,
@@ -197,51 +195,7 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 	plan.Actions = append(labelActions, plan.Actions...)
 	return plan, nil
 }
-
-func validateSourceSnapshot(snapshot source.Snapshot, config projectconfig.Config) (map[string]source.WorkItem, map[string]int, error) {
-	itemsByID := make(map[string]source.WorkItem, len(snapshot.WorkItems))
-	levelsByRole := make(map[string]int, len(config.YouTrack.Hierarchy))
-	for index, level := range config.YouTrack.Hierarchy {
-		levelsByRole[level.Role] = index
-	}
-	for _, item := range snapshot.WorkItems {
-		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Title) == "" {
-			return nil, nil, fmt.Errorf("source work item has an empty ID or title")
-		}
-		if _, exists := itemsByID[item.ID]; exists {
-			return nil, nil, fmt.Errorf("duplicate source work item %q", item.ID)
-		}
-		level, exists := levelsByRole[item.Role]
-		if !exists {
-			return nil, nil, fmt.Errorf("source work item %q has unknown role %q", item.ID, item.Role)
-		}
-		role, configuredLevel, found := config.RoleForKind(item.Kind)
-		if !found || role != item.Role || configuredLevel != level {
-			return nil, nil, fmt.Errorf("source work item %q kind %q does not match role %q", item.ID, item.Kind, item.Role)
-		}
-		itemsByID[item.ID] = item
-	}
-	for _, item := range snapshot.WorkItems {
-		level := levelsByRole[item.Role]
-		if level == 0 {
-			if item.ParentID != "" {
-				return nil, nil, fmt.Errorf("source root work item %q unexpectedly has parent %q", item.ID, item.ParentID)
-			}
-			continue
-		}
-		parent, exists := itemsByID[item.ParentID]
-		if !exists {
-			return nil, nil, fmt.Errorf("source work item %q references missing parent %q", item.ID, item.ParentID)
-		}
-		expectedRole := config.YouTrack.Hierarchy[level-1].Role
-		if parent.Role != expectedRole {
-			return nil, nil, fmt.Errorf("source work item %q requires parent role %q, got %q", item.ID, expectedRole, parent.Role)
-		}
-	}
-	return itemsByID, levelsByRole, nil
-}
-
-func makeDesiredItem(item source.WorkItem, target Target, itemsByID map[string]source.WorkItem, config projectconfig.Config) (DesiredItem, error) {
+func makeDesiredItem(item source.WorkItem, target Target, itemsByID map[string]source.WorkItem, config projectconfig.Config) DesiredItem {
 	desired := DesiredItem{
 		SourceID:    item.ID,
 		Target:      target,
@@ -266,13 +220,7 @@ func makeDesiredItem(item source.WorkItem, target Target, itemsByID map[string]s
 		}
 		parentID = parent.ParentID
 	}
-	if target == Milestone && desired.ParentSourceID != "" {
-		return DesiredItem{}, fmt.Errorf("milestone source %q unexpectedly has synchronized parent %q", item.ID, desired.ParentSourceID)
-	}
-	if target == Task && desired.ParentSourceID == "" {
-		return DesiredItem{}, fmt.Errorf("task source %q has no synchronized issue parent", item.ID)
-	}
-	return desired, nil
+	return desired
 }
 
 func desiredLabels(item source.WorkItem) []string {

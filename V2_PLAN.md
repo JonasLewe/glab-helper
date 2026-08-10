@@ -19,6 +19,8 @@ the stable Zsh release until the final cutover.
 - Introduce the source interface where it is consumed, only when YouTrack is
   connected to the sync core. Do not add a plugin system or speculative
   capabilities.
+- Validate data once at its boundary; downstream code trusts those validated
+  invariants instead of repeating the same checks.
 - Add one focused test for risky behavior. Remove the corresponding Zsh code
   and tests as soon as a Go path replaces them.
 
@@ -37,6 +39,7 @@ the stable Zsh release until the final cutover.
 - [x] 10 — Preview the combined milestone/issue/task synchronization without
   writes.
 - [x] 11 — Confirm and apply the sync plan; keep YouTrack read-only.
+- [x] 11a — Simplify the sync core without changing its supported behavior.
 - [ ] 12 — List and select an existing issue or task without mutations.
 - [ ] 13 — Migrate branch pruning, creation, and checkout for issues and tasks.
 - [ ] 14 — Migrate the remaining issue-edit actions.

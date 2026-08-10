@@ -19,7 +19,7 @@ import (
 
 const (
 	issuePageSize = 100
-	issueFields   = "id,idReadable,summary,description,resolved,tags(name),customFields(name,value(name)),parent(issues(idReadable))"
+	issueFields   = "idReadable,summary,description,resolved,tags(name),customFields(name,value(name)),parent(issues(idReadable))"
 )
 
 var snapshotHTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -29,7 +29,6 @@ type httpDoer interface {
 }
 
 type issueJSON struct {
-	ID           *string            `json:"id"`
 	IDReadable   *string            `json:"idReadable"`
 	Summary      *string            `json:"summary"`
 	Description  json.RawMessage    `json:"description"`
@@ -74,9 +73,6 @@ func readSnapshotWithClient(ctx context.Context, client httpDoer, connection Con
 func readSnapshot(ctx context.Context, client httpDoer, connection Config, project projectconfig.Config, pageSize int) (source.Snapshot, error) {
 	if strings.TrimSpace(connection.URL) == "" || strings.TrimSpace(connection.token) == "" {
 		return source.Snapshot{}, fmt.Errorf("incomplete YouTrack configuration")
-	}
-	if err := project.Validate(); err != nil {
-		return source.Snapshot{}, fmt.Errorf("invalid project configuration: %w", err)
 	}
 	if pageSize < 1 {
 		return source.Snapshot{}, fmt.Errorf("page size must be positive")
@@ -171,9 +167,6 @@ func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, err
 	if err := json.Unmarshal(data, &value); err != nil {
 		return source.WorkItem{}, err
 	}
-	if value.ID == nil || strings.TrimSpace(*value.ID) == "" {
-		return source.WorkItem{}, fmt.Errorf("missing or invalid field %q", "id")
-	}
 	if value.IDReadable == nil || strings.TrimSpace(*value.IDReadable) == "" {
 		return source.WorkItem{}, fmt.Errorf("missing or invalid field %q", "idReadable")
 	}
@@ -214,20 +207,14 @@ func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, err
 		item.Resolved = true
 	}
 
-	seenTags := make(map[string]struct{}, len(*value.Tags))
 	for index, tag := range *value.Tags {
 		if tag.Name == nil || strings.TrimSpace(*tag.Name) == "" {
 			return source.WorkItem{}, fmt.Errorf("field %q item %d has no valid name", "tags", index+1)
 		}
-		if _, exists := seenTags[*tag.Name]; exists {
-			return source.WorkItem{}, fmt.Errorf("field %q contains duplicate %q", "tags", *tag.Name)
-		}
-		seenTags[*tag.Name] = struct{}{}
 		item.Tags = append(item.Tags, *tag.Name)
 	}
 	sort.Strings(item.Tags)
 
-	seenFields := make(map[string]struct{})
 	for index, field := range *value.CustomFields {
 		if field.Name == nil || strings.TrimSpace(*field.Name) == "" {
 			return source.WorkItem{}, fmt.Errorf("field %q item %d has no valid name", "customFields", index+1)
@@ -243,10 +230,6 @@ func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, err
 		default:
 			continue
 		}
-		if _, exists := seenFields[fieldRole]; exists {
-			return source.WorkItem{}, fmt.Errorf("field %q contains duplicate %q", "customFields", *field.Name)
-		}
-		seenFields[fieldRole] = struct{}{}
 		fieldValue, err := parseNamedFieldValue(field.Value)
 		if err != nil {
 			return source.WorkItem{}, fmt.Errorf("custom field %q: %w", *field.Name, err)
@@ -260,7 +243,7 @@ func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, err
 			item.Priority = fieldValue
 		}
 	}
-	role, _, found := project.RoleForKind(item.Kind)
+	role, found := project.RoleForKind(item.Kind)
 	if !found {
 		return source.WorkItem{}, fmt.Errorf("custom field %q value %q is not assigned to a configured hierarchy role", project.YouTrack.Fields.Kind, item.Kind)
 	}

@@ -110,7 +110,7 @@ func (config Config) Validate() error {
 	seenRoles := make(map[string]struct{}, len(config.YouTrack.Hierarchy))
 	seenTypes := make(map[string]string)
 	for index, level := range config.YouTrack.Hierarchy {
-		if !validRole(level.Role) {
+		if strings.TrimSpace(level.Role) == "" || level.Role != strings.TrimSpace(level.Role) {
 			return fmt.Errorf("youtrack.hierarchy level %d has invalid role %q", index+1, level.Role)
 		}
 		if _, exists := seenRoles[level.Role]; exists {
@@ -135,11 +135,7 @@ func (config Config) Validate() error {
 		}
 	}
 
-	if len(config.GitLab.Targets) != len(seenRoles) {
-		return fmt.Errorf("gitlab.targets must contain exactly one target for every hierarchy role")
-	}
 	targetSequence := make([]string, 0, len(config.YouTrack.Hierarchy))
-	seenTargets := make(map[string]struct{})
 	for _, level := range config.YouTrack.Hierarchy {
 		target, exists := config.GitLab.Targets[level.Role]
 		if !exists {
@@ -151,10 +147,6 @@ func (config Config) Validate() error {
 		if target == "ignore" {
 			continue
 		}
-		if _, exists := seenTargets[target]; exists {
-			return fmt.Errorf("GitLab target %q is assigned more than once", target)
-		}
-		seenTargets[target] = struct{}{}
 		targetSequence = append(targetSequence, target)
 	}
 	for role := range config.GitLab.Targets {
@@ -172,15 +164,15 @@ func (config Config) Validate() error {
 	return nil
 }
 
-func (config Config) RoleForKind(kind string) (string, int, bool) {
-	for index, level := range config.YouTrack.Hierarchy {
+func (config Config) RoleForKind(kind string) (string, bool) {
+	for _, level := range config.YouTrack.Hierarchy {
 		for _, issueType := range level.Types {
 			if strings.EqualFold(kind, issueType) {
-				return level.Role, index, true
+				return level.Role, true
 			}
 		}
 	}
-	return "", 0, false
+	return "", false
 }
 
 func (config Config) TargetForRole(role string) (string, bool) {
@@ -188,34 +180,11 @@ func (config Config) TargetForRole(role string) (string, bool) {
 	return target, found
 }
 
-func validRole(role string) bool {
-	if role == "" || role[0] < 'a' || role[0] > 'z' {
-		return false
-	}
-	for _, character := range role[1:] {
-		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' && character != '-' {
-			return false
-		}
-	}
-	return true
-}
-
 func validateCommunityEditionHierarchy(targets []string) error {
-	for index, target := range targets {
-		switch target {
-		case "milestone":
-			if index != 0 {
-				return fmt.Errorf("GitLab milestone can only be the root hierarchy target")
-			}
-		case "issue":
-			if index > 0 && targets[index-1] != "milestone" {
-				return fmt.Errorf("GitLab issue can only be a root or follow a milestone in Community Edition")
-			}
-		case "task":
-			if index == 0 || targets[index-1] != "issue" || index != len(targets)-1 {
-				return fmt.Errorf("GitLab task must be the final level directly below an issue in Community Edition")
-			}
-		}
+	switch strings.Join(targets, "/") {
+	case "milestone", "issue", "milestone/issue", "issue/task", "milestone/issue/task":
+		return nil
+	default:
+		return fmt.Errorf("unsupported GitLab Community Edition hierarchy %q", strings.Join(targets, " -> "))
 	}
-	return nil
 }
