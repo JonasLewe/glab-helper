@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,5 +31,47 @@ func TestOfflineCLI(t *testing.T) {
 				t.Fatalf("output %q does not contain %q", output, test.want)
 			}
 		})
+	}
+}
+
+func TestOnlineCLIReadsAllIssues(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	commandLog := filepath.Join(temporaryDirectory, "commands")
+	glabPath := filepath.Join(temporaryDirectory, "glab")
+	glabStub := `#!/bin/sh
+printf '%s\n' "$*" >>"$COMMAND_LOG"
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project"}'
+    ;;
+  "api --paginate projects/42/issues?state=all&per_page=100")
+    printf '%s\n' '[{"iid":7,"title":"Issue","description":"","labels":[],"milestone":null,"state":"opened","assignees":[]}]'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	if err := os.WriteFile(glabPath, []byte(glabStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COMMAND_LOG", commandLog)
+	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit code = %d, want 2; stderr: %s", code, stderr.String())
+	}
+	if output := stderr.String(); !strings.Contains(output, "read 1 GitLab issues without changes") {
+		t.Fatalf("output %q does not report the complete issue read", output)
+	}
+
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCommands := "repo view --output json\napi --paginate projects/42/issues?state=all&per_page=100\n"
+	if string(commands) != wantCommands {
+		t.Fatalf("commands = %q, want %q", commands, wantCommands)
 	}
 }

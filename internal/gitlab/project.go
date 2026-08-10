@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 )
 
 type Project struct {
@@ -13,7 +12,11 @@ type Project struct {
 }
 
 func CurrentProject(ctx context.Context) (Project, error) {
-	output, err := exec.CommandContext(ctx, "glab", "repo", "view", "--output", "json").Output()
+	return NewClient().CurrentProject(ctx)
+}
+
+func (client *Client) CurrentProject(ctx context.Context) (Project, error) {
+	output, err := client.output(ctx, "repo", "view", "--output", "json")
 	if err != nil {
 		return Project{}, fmt.Errorf("run glab repo view: %w", err)
 	}

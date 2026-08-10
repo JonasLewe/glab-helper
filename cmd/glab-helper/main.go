@@ -67,12 +67,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	project, err := gitlab.CurrentProject(context.Background())
+	client := gitlab.NewClient()
+	project, err := client.CurrentProject(context.Background())
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot detect the current GitLab project: %v\n", err)
 		return 1
 	}
+	issues, err := client.ListIssues(context.Background(), project.ID)
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read all GitLab issues for %s: %v\n", project.Path, err)
+		return 1
+	}
 
-	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; use the Zsh glab-helper.\n", project.Path)
+	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues without changes.\n", project.Path, len(issues))
 	return 2
 }

@@ -23,7 +23,7 @@ the stable Zsh release until the final cutover.
 - [x] 01 — Minimal Go command with offline help and version.
 - [x] 02 — Preserve the existing CLI flag contract.
 - [x] 03 — Read and validate the current GitLab project without mutations.
-- [ ] 04 — Read all GitLab issues or fail without a partial result.
+- [x] 04 — Read all GitLab issues or fail without a partial result.
 - [ ] 05 — Read all GitLab milestones or fail without a partial result.
 - [ ] 06 — Read all GitLab labels or fail without a partial result.
 - [ ] 07 — Read current remote branches; keep pruning and checkout disabled.
