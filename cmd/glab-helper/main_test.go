@@ -45,6 +45,7 @@ func TestOnlineCLIReadsProjectData(t *testing.T) {
 	commandLog := filepath.Join(temporaryDirectory, "commands")
 	glabPath := filepath.Join(temporaryDirectory, "glab")
 	gitPath := filepath.Join(temporaryDirectory, "git")
+	fzfPath := filepath.Join(temporaryDirectory, "fzf")
 	projectConfigPath := filepath.Join(temporaryDirectory, "project-config.json")
 	projectConfiguration := `{
   "version": 1,
@@ -121,12 +122,19 @@ esac
 	if err := os.WriteFile(gitPath, []byte(gitStub), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	fzfStub := `#!/bin/sh
+IFS= read -r selected
+printf '%s\n' "$selected"
+`
+	if err := os.WriteFile(fzfPath, []byte(fzfStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("COMMAND_LOG", commandLog)
 	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH", "")
 
 	const gitLabSnapshotCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\n"
-	const projectReadCommands = gitLabSnapshotCommands + "for-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
+	const workItemReadCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\nfor-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
 	tests := []struct {
 		name                 string
 		args                 []string
@@ -170,9 +178,9 @@ esac
 		{
 			name:                "YouTrack config optional",
 			youTrackUnavailable: true,
-			code:                2,
-			wantOutput:          "YouTrack configuration is unavailable",
-			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n" + projectReadCommands,
+			code:                0,
+			wantOutput:          "Selected issue #7",
+			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n" + workItemReadCommands,
 		},
 		{
 			name:                "maintenance requires YouTrack config",
@@ -191,6 +199,7 @@ esac
 		},
 		{
 			name:              "YouTrack read failure stops before GitLab reads",
+			args:              []string{"--dry-run"},
 			youTrackReadFails: true,
 			code:              1,
 			wantOutput:        "Cannot read the complete YouTrack source snapshot",

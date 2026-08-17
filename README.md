@@ -50,8 +50,9 @@ read separately through the paginated work-item GraphQL API. The binary reads
 every issue selected by the configured YouTrack query through paginated `GET`
 requests into an in-memory, provider-neutral snapshot. YouTrack is never
 written. Missing YouTrack access remains optional except in maintenance and
-synchronization-preview modes. The later interactive workflows still use the
-Jira-based Zsh implementation.
+synchronization-preview modes. The normal Go menu can synchronize YouTrack,
+select an existing GitLab issue or task, or exit. The later branch and editing
+actions still use the Jira-based Zsh implementation.
 
 `--dry-run` now builds and prints the combined YouTrack synchronization plan.
 The preview includes labels, milestones, issues, tasks, their configured
@@ -67,6 +68,12 @@ with their issue parent already assigned. Updates never reopen closed targets.
 If one action fails, execution stops immediately, reports how many preceding
 actions completed, and asks for a fresh `--dry-run` before retrying. The plan is
 idempotent, so successfully completed actions are recognized on that retry.
+
+The read-only `Work on existing issue or task` action lists all open GitLab
+issues and tasks in one `fzf` selector. Tasks show their parent issue, and an
+item is annotated when a current remote branch starts with its IID followed by
+`-`. Selecting an item prints its context and exits without fetching, pruning,
+creating, or checking out a branch and without changing GitLab or YouTrack.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by
