@@ -22,22 +22,22 @@ type Candidate struct {
 	IID       int64
 	Title     string
 	ParentIID int64
-	Branch    string
+	Branch    gitrepo.Branch
 }
 
-func OpenCandidates(issues []gitlab.Issue, tasks []gitlab.Task, branches []gitrepo.RemoteBranch) []Candidate {
-	branchByIID := make(map[int64]string)
+func OpenCandidates(issues []gitlab.Issue, tasks []gitlab.Task, branches []gitrepo.Branch) []Candidate {
+	branchByIID := make(map[int64]gitrepo.Branch)
 	for _, branch := range branches {
 		separator := strings.IndexByte(branch.Name, '-')
 		if separator < 1 {
 			continue
 		}
 		iid, err := strconv.ParseInt(branch.Name[:separator], 10, 64)
-		if err != nil || iid < 1 {
+		if err != nil || iid < 1 || strconv.FormatInt(iid, 10) != branch.Name[:separator] {
 			continue
 		}
 		if _, exists := branchByIID[iid]; !exists {
-			branchByIID[iid] = branch.Name
+			branchByIID[iid] = branch
 		}
 	}
 
@@ -66,8 +66,38 @@ func (candidate Candidate) Display() string {
 	if candidate.Kind == Task && candidate.ParentIID > 0 {
 		result += fmt.Sprintf("  [parent: #%d]", candidate.ParentIID)
 	}
-	if candidate.Branch != "" {
-		result += "  [branch: " + candidate.Branch + "]"
+	if candidate.Branch.Name != "" {
+		result += "  [branch: " + candidate.Branch.Name + "]"
 	}
 	return result
+}
+
+func BranchName(iid int64, title string) string {
+	var slug strings.Builder
+	previousDash := false
+	for _, character := range strings.ToLower(title) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			slug.WriteRune(character)
+			previousDash = false
+			continue
+		}
+		if slug.Len() > 0 && !previousDash {
+			slug.WriteByte('-')
+			previousDash = true
+		}
+	}
+	value := strings.Trim(slug.String(), "-")
+	if value == "" {
+		value = "issue"
+	}
+	name := strconv.FormatInt(iid, 10) + "-" + value
+	if len(name) <= 60 {
+		return name
+	}
+	name = name[:60]
+	prefixLength := len(strconv.FormatInt(iid, 10)) + 1
+	if separator := strings.LastIndexByte(name, '-'); separator >= prefixLength {
+		name = name[:separator]
+	}
+	return name
 }

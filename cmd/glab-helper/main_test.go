@@ -79,7 +79,7 @@ esac
 printf '%s\n' "$*" >>"$COMMAND_LOG"
 case "$*" in
   "repo view --output json")
-    printf '%s\n' '{"id":42,"path_with_namespace":"group/project"}'
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project","default_branch":"main"}'
     ;;
   "api projects/group%2Fproject/variables/YOUTRACK_URL")
     if [ "${YOUTRACK_CONFIG_UNAVAILABLE:-}" = true ]; then exit 1; fi
@@ -111,6 +111,11 @@ esac
 	gitStub := `#!/bin/sh
 printf '%s\n' "$*" >>"$COMMAND_LOG"
 case "$*" in
+  "fetch --prune origin --quiet")
+    ;;
+  "for-each-ref --sort=-committerdate --format=%(refname)%00%(symref) refs/heads/ refs/remotes/origin/")
+    printf 'refs/remotes/origin/feature/new\0\nrefs/heads/main\0\nrefs/remotes/origin/main\0\nrefs/remotes/origin/HEAD\0refs/remotes/origin/main\n'
+    ;;
   "for-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/")
     printf 'feature/new\0\nHEAD\0refs/remotes/origin/main\nmain\0\n'
     ;;
@@ -134,7 +139,7 @@ printf '%s\n' "$selected"
 	t.Setenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH", "")
 
 	const gitLabSnapshotCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\n"
-	const workItemReadCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\nfor-each-ref --sort=-committerdate --format=%(refname:strip=3)%00%(symref) refs/remotes/origin/\n"
+	const workItemReadCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\nfetch --prune origin --quiet\nfor-each-ref --sort=-committerdate --format=%(refname)%00%(symref) refs/heads/ refs/remotes/origin/\n"
 	tests := []struct {
 		name                 string
 		args                 []string
@@ -262,5 +267,100 @@ printf '%s\n' "$selected"
 				t.Fatalf("YouTrack request count = %d, want %d", youTrackRequests, wantYouTrackRequests)
 			}
 		})
+	}
+}
+
+func TestWorkItemBranchCreationWorkflow(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	t.Chdir(temporaryDirectory)
+	commandLog := filepath.Join(temporaryDirectory, "git-commands")
+	glabPath := filepath.Join(temporaryDirectory, "glab")
+	gitPath := filepath.Join(temporaryDirectory, "git")
+	fzfPath := filepath.Join(temporaryDirectory, "fzf")
+
+	glabStub := `#!/bin/sh
+if [ "$1 $2" = "api graphql" ]; then
+  printf '%s\n' '{"data":{"namespace":{"workItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+  exit 0
+fi
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project","default_branch":"main"}'
+    ;;
+  "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100")
+    printf '%s\n' '[{"iid":7,"title":"Implement parser","description":"","labels":[],"milestone":null,"state":"opened","assignees":[]}]'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	gitStub := `#!/bin/sh
+printf '%s\n' "$*" >>"$COMMAND_LOG"
+case "$*" in
+  "fetch --prune origin --quiet")
+    ;;
+  "for-each-ref --sort=-committerdate --format=%(refname)%00%(symref) refs/heads/ refs/remotes/origin/")
+    printf 'refs/heads/main\0\nrefs/remotes/origin/main\0\nrefs/remotes/origin/HEAD\0refs/remotes/origin/main\n'
+    ;;
+  "check-ref-format --branch 7-implement-parser")
+    printf '%s\n' '7-implement-parser'
+    ;;
+  "branch 7-implement-parser origin/main")
+    ;;
+  "checkout 7-implement-parser")
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	fzfStub := `#!/bin/sh
+case "$*" in
+  *"Action >"*)
+    printf '%s\n' 'Work on existing issue or task'
+    ;;
+  *"Issue or task >"*)
+    IFS= read -r selected
+    printf '%s\n' "$selected"
+    ;;
+  *"Work item action >"*)
+    printf '%s\n' 'Branch (checkout / create)'
+    ;;
+  *"Base branch >"*)
+    printf '%s\n' 'main (default)'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	for path, content := range map[string]string{glabPath: glabStub, gitPath: gitStub, fzfPath: fzfStub} {
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("COMMAND_LOG", commandLog)
+	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, strings.NewReader("\ny\n"), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d; stderr: %s", code, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Created branch 7-implement-parser from main") || !strings.Contains(output, "Checked out branch 7-implement-parser") {
+		t.Fatalf("output = %q", output)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCommands := "fetch --prune origin --quiet\n" +
+		"for-each-ref --sort=-committerdate --format=%(refname)%00%(symref) refs/heads/ refs/remotes/origin/\n" +
+		"check-ref-format --branch 7-implement-parser\n" +
+		"branch 7-implement-parser origin/main\n" +
+		"checkout 7-implement-parser\n"
+	if string(commands) != wantCommands {
+		t.Fatalf("git commands = %q, want %q", commands, wantCommands)
 	}
 }

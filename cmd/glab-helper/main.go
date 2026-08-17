@@ -26,6 +26,9 @@ const (
 	actionSync = "Sync YouTrack"
 	actionWork = "Work on existing issue or task"
 	actionExit = "Exit"
+
+	workActionBranch = "Branch (checkout / create)"
+	workActionDone   = "Done"
 )
 
 var readYouTrackSnapshot = youtrack.ReadSnapshot
@@ -145,12 +148,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stderr, "Cannot read all GitLab tasks for %s: %v\n", project.Path, err)
 				return 1
 			}
-			branches, err := gitrepo.NewClient().ListRemoteBranches(ctx)
-			if err != nil {
-				fmt.Fprintf(stderr, "Cannot read current remote branches for %s: %v\n", project.Path, err)
+			gitClient := gitrepo.NewClient()
+			if err := gitClient.PruneRemoteBranches(ctx); err != nil {
+				fmt.Fprintf(stderr, "Cannot refresh remote branches for %s: %v\n", project.Path, err)
 				return 1
 			}
-			return selectWorkItem(ctx, picker, issues, tasks, branches, stdout, stderr)
+			branches, err := gitClient.ListBranches(ctx)
+			if err != nil {
+				fmt.Fprintf(stderr, "Cannot read current local and remote branches for %s: %v\n", project.Path, err)
+				return 1
+			}
+			return selectWorkItem(ctx, picker, gitClient, issues, tasks, branches, project.DefaultBranch, stdin, stdout, stderr)
 		case actionExit:
 			fmt.Fprintln(stdout, "Done.")
 			return 0
@@ -265,9 +273,12 @@ func runSynchronization(
 func selectWorkItem(
 	ctx context.Context,
 	picker *ui.Picker,
+	gitClient *gitrepo.Client,
 	issues []gitlab.Issue,
 	tasks []gitlab.Task,
-	branches []gitrepo.RemoteBranch,
+	branches []gitrepo.Branch,
+	defaultBranch string,
+	stdin io.Reader,
 	stdout, stderr io.Writer,
 ) int {
 	candidates := workitem.OpenCandidates(issues, tasks, branches)
@@ -297,12 +308,157 @@ func selectWorkItem(
 		if candidate.ParentIID > 0 {
 			fmt.Fprintf(stdout, "Parent issue: #%d\n", candidate.ParentIID)
 		}
-		if candidate.Branch != "" {
-			fmt.Fprintf(stdout, "Existing branch: %s\n", candidate.Branch)
+		if candidate.Branch.Name != "" {
+			fmt.Fprintf(stdout, "Existing branch: %s\n", candidate.Branch.Name)
 		}
-		fmt.Fprintln(stdout, "No changes were applied.")
-		return 0
+		workAction, selected, err := picker.Choose(ctx, []string{workActionBranch, workActionDone}, ui.Options{Prompt: "Work item action", BorderLabel: fmt.Sprintf("%s #%d", candidate.Kind, candidate.IID)})
+		if err != nil {
+			fmt.Fprintf(stderr, "Cannot select a work item action: %v\n", err)
+			return 1
+		}
+		if !selected || workAction == workActionDone {
+			fmt.Fprintln(stdout, "Done. No changes were applied.")
+			return 0
+		}
+		return manageWorkItemBranch(ctx, picker, gitClient, candidate, branches, defaultBranch, bufio.NewReader(stdin), stdout, stderr)
 	}
 	fmt.Fprintln(stderr, "Cannot match the selected GitLab issue or task.")
 	return 1
+}
+
+func manageWorkItemBranch(
+	ctx context.Context,
+	picker *ui.Picker,
+	gitClient *gitrepo.Client,
+	candidate workitem.Candidate,
+	branches []gitrepo.Branch,
+	defaultBranch string,
+	stdin *bufio.Reader,
+	stdout, stderr io.Writer,
+) int {
+	if candidate.Branch.Name != "" {
+		confirmed, err := readConfirmation(stdin, stdout, fmt.Sprintf("Check out existing branch %s? [y/N] ", candidate.Branch.Name))
+		if err != nil {
+			fmt.Fprintf(stderr, "Cannot read branch checkout confirmation: %v\n", err)
+			return 1
+		}
+		if !confirmed {
+			fmt.Fprintln(stdout, "Branch checkout cancelled. No changes were applied.")
+			return 0
+		}
+		if err := gitClient.CheckoutBranch(ctx, candidate.Branch); err != nil {
+			fmt.Fprintf(stderr, "Cannot check out the existing work item branch: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Checked out branch %s.\n", candidate.Branch.Name)
+		return 0
+	}
+
+	defaultName := workitem.BranchName(candidate.IID, candidate.Title)
+	fmt.Fprintf(stdout, "Branch name [%s]: ", defaultName)
+	branchName, err := stdin.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		fmt.Fprintf(stderr, "Cannot read the branch name: %v\n", err)
+		return 1
+	}
+	if errors.Is(err, io.EOF) && branchName == "" {
+		fmt.Fprintln(stdout, "Branch creation cancelled. No changes were applied.")
+		return 0
+	}
+	branchName = strings.TrimSpace(branchName)
+	if branchName == "" {
+		branchName = defaultName
+	}
+	for _, branch := range branches {
+		if branch.Name != branchName {
+			continue
+		}
+		confirmed, err := readConfirmation(stdin, stdout, fmt.Sprintf("Branch %s already exists. Check it out? [y/N] ", branchName))
+		if err != nil {
+			fmt.Fprintf(stderr, "Cannot read branch checkout confirmation: %v\n", err)
+			return 1
+		}
+		if !confirmed {
+			fmt.Fprintln(stdout, "Branch checkout cancelled. No changes were applied.")
+			return 0
+		}
+		if err := gitClient.CheckoutBranch(ctx, branch); err != nil {
+			fmt.Fprintf(stderr, "Cannot check out the existing branch: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Checked out branch %s.\n", branch.Name)
+		return 0
+	}
+
+	if len(branches) == 0 {
+		fmt.Fprintln(stderr, "Cannot create a branch because the repository has no local or remote base branch.")
+		return 1
+	}
+	baseBranches := append([]gitrepo.Branch(nil), branches...)
+	if defaultBranch != "" {
+		for index, branch := range baseBranches {
+			if branch.Name != defaultBranch || index == 0 {
+				continue
+			}
+			copy(baseBranches[1:index+1], baseBranches[0:index])
+			baseBranches[0] = branch
+			break
+		}
+	}
+	baseChoices := make([]string, len(baseBranches))
+	for index, branch := range baseBranches {
+		baseChoices[index] = branch.Name
+		if branch.Name == defaultBranch {
+			baseChoices[index] += " (default)"
+		}
+	}
+	baseChoice, selected, err := picker.Choose(ctx, baseChoices, ui.Options{Prompt: "Base branch", BorderLabel: "base branch"})
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot select a base branch: %v\n", err)
+		return 1
+	}
+	if !selected {
+		fmt.Fprintln(stdout, "Branch creation cancelled. No changes were applied.")
+		return 0
+	}
+	baseIndex := -1
+	for index, rendered := range baseChoices {
+		if rendered == baseChoice {
+			baseIndex = index
+			break
+		}
+	}
+	if baseIndex < 0 {
+		fmt.Fprintln(stderr, "Cannot match the selected base branch.")
+		return 1
+	}
+	if err := gitClient.CreateBranch(ctx, branchName, baseBranches[baseIndex]); err != nil {
+		fmt.Fprintf(stderr, "Cannot create the work item branch: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Created branch %s from %s.\n", branchName, baseBranches[baseIndex].Name)
+	confirmed, err := readConfirmation(stdin, stdout, "Check out the new branch now? [y/N] ")
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read branch checkout confirmation: %v\n", err)
+		return 1
+	}
+	if !confirmed {
+		return 0
+	}
+	if err := gitClient.CheckoutBranch(ctx, gitrepo.Branch{Name: branchName, Local: true}); err != nil {
+		fmt.Fprintf(stderr, "Branch %s was created, but checkout failed: %v\n", branchName, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Checked out branch %s.\n", branchName)
+	return 0
+}
+
+func readConfirmation(input *bufio.Reader, output io.Writer, prompt string) (bool, error) {
+	fmt.Fprint(output, prompt)
+	answer, err := input.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	answer = strings.TrimSpace(answer)
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
 }

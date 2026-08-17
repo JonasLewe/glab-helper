@@ -51,8 +51,9 @@ every issue selected by the configured YouTrack query through paginated `GET`
 requests into an in-memory, provider-neutral snapshot. YouTrack is never
 written. Missing YouTrack access remains optional except in maintenance and
 synchronization-preview modes. The normal Go menu can synchronize YouTrack,
-select an existing GitLab issue or task, or exit. The later branch and editing
-actions still use the Jira-based Zsh implementation.
+select an existing GitLab issue or task, manage its branch, or exit. The
+remaining editing and developer actions still use the Jira-based Zsh
+implementation.
 
 `--dry-run` now builds and prints the combined YouTrack synchronization plan.
 The preview includes labels, milestones, issues, tasks, their configured
@@ -69,11 +70,17 @@ If one action fails, execution stops immediately, reports how many preceding
 actions completed, and asks for a fresh `--dry-run` before retrying. The plan is
 idempotent, so successfully completed actions are recognized on that retry.
 
-The read-only `Work on existing issue or task` action lists all open GitLab
-issues and tasks in one `fzf` selector. Tasks show their parent issue, and an
-item is annotated when a current remote branch starts with its IID followed by
-`-`. Selecting an item prints its context and exits without fetching, pruning,
-creating, or checking out a branch and without changing GitLab or YouTrack.
+The `Work on existing issue or task` action first runs
+`git fetch --prune origin`, then lists all open GitLab issues and tasks in one
+`fzf` selector.
+Tasks show their parent issue, and an item is annotated when a current local or
+remote branch starts with its IID followed by `-`. The branch action can check
+out that branch or create a local branch from any current local or `origin`
+branch. New names default to `<iid>-<title-slug>` and are validated by Git;
+the repository's default branch is placed first in the base selector. Checkout
+remains optional. This workflow changes only local Git refs and the working
+tree; it never writes GitLab or YouTrack and does not push a created branch.
+`--dry-run` returns before fetching or reading branches.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by

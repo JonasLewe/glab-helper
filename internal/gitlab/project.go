@@ -7,8 +7,9 @@ import (
 )
 
 type Project struct {
-	ID   int64
-	Path string
+	ID            int64
+	Path          string
+	DefaultBranch string
 }
 
 func CurrentProject(ctx context.Context) (Project, error) {
@@ -30,6 +31,7 @@ func parseProject(data []byte) (Project, error) {
 		PathWithNamespace string `json:"path_with_namespace"`
 		NameWithNamespace string `json:"name_with_namespace"`
 		Name              string `json:"name"`
+		DefaultBranch     string `json:"default_branch"`
 	}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return Project{}, fmt.Errorf("decode glab project: %w", err)
@@ -46,5 +48,5 @@ func parseProject(data []byte) (Project, error) {
 		return Project{}, fmt.Errorf("decode glab project: missing id or path")
 	}
 
-	return Project{ID: value.ID, Path: path}, nil
+	return Project{ID: value.ID, Path: path, DefaultBranch: value.DefaultBranch}, nil
 }
