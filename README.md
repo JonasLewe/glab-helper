@@ -52,8 +52,9 @@ requests into an in-memory, provider-neutral snapshot. YouTrack is never
 written. Missing YouTrack access remains optional except in maintenance and
 synchronization-preview modes. The normal Go menu can synchronize YouTrack,
 select an existing GitLab issue or task, manage its branch, edit an issue, or
-exit. The remaining developer and maintenance actions still use the
-Jira-based Zsh implementation.
+exit. Developer actions and the guarded maintenance reset are also migrated;
+the installer still selects the Jira-based Zsh implementation until the final
+cutover.
 
 `--dry-run` now builds and prints the combined YouTrack synchronization plan.
 The preview includes labels, milestones, issues, tasks, their configured
@@ -110,7 +111,19 @@ branch workflow after the issue exists.
 Snapshot exports are written as private JSON files below
 `.glab-helper-snapshots/` in the target repository. The directory contains
 `issues.json`, `milestones.json`, `labels.json`, and `metadata.json` and is the
-same backup format used by the upcoming maintenance migration.
+same backup format used by maintenance mode.
+
+The Go maintenance reset is available only through `--maintenance` and only in
+the configured `YOUTRACK_TARGET_PROJECT`. It reads every GitLab issue and
+milestone and shows the complete deletion plan. `--maintenance --dry-run`
+returns before any local or remote write. The real reset requires typing
+`RESET ALL <full-project-path>`, writes a mandatory pre-reset snapshot, and
+then reads and compares the complete plan again. A changed plan or failed
+snapshot aborts before the first delete. Issues are deleted before milestones;
+if any issue delete fails, all milestone deletes are skipped. Branches, labels,
+and merge requests are always preserved. YouTrack work items are not read or
+modified by maintenance mode; YouTrack remains the source of truth for the
+subsequent clean synchronization.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by

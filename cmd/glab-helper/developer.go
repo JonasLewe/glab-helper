@@ -41,6 +41,7 @@ const (
 )
 
 var currentTime = time.Now
+var writeProjectBackup = projectbackup.Write
 
 func projectHasTarget(config projectconfig.Config, target string) bool {
 	for _, configured := range config.GitLab.Targets {
@@ -557,7 +558,7 @@ func exportProjectSnapshot(ctx context.Context, client *gitlab.Client, project g
 		fmt.Fprintf(stderr, "Cannot export the GitLab snapshot because labels could not be read completely: %v\n", err)
 		return 1
 	}
-	directory, err := projectbackup.Write(".glab-helper-snapshots", currentTime(), project.ID, project.Path, "manual", issues, milestones, labels)
+	directory, err := writeProjectBackup(".glab-helper-snapshots", currentTime(), project.ID, project.Path, "manual", issues, milestones, labels)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot write the GitLab snapshot: %v\n", err)
 		return 1

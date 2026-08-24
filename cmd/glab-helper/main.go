@@ -125,6 +125,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
+	picker := ui.NewPicker()
+	if maintenance {
+		action := actionResetProject
+		if dryRun {
+			action = actionPreviewReset
+		}
+		selectedAction, selected, err := picker.Choose(ctx, []string{action, actionExit}, ui.Options{Prompt: "Maintenance", BorderLabel: "maintenance"})
+		if err != nil {
+			fmt.Fprintf(stderr, "Cannot select a maintenance action: %v\n", err)
+			return 1
+		}
+		if !selected || selectedAction == actionExit {
+			fmt.Fprintln(stdout, "Done.")
+			return 0
+		}
+		return runMaintenanceReset(ctx, client, project, dryRun, stdin, stdout, stderr)
+	}
 	if dryRun && !youTrackAvailable {
 		if !projectConfigAvailable {
 			fmt.Fprintf(stderr, "YouTrack synchronization preview requires the project configuration: %v\n", projectConfigErr)
@@ -133,7 +150,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	picker := ui.NewPicker()
 	if dryRun {
 		if !dev {
 			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, true, stdin, stdout, stderr)
@@ -156,79 +172,46 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, true, stdin, stdout, stderr)
 	}
-	if !maintenance {
-		actions := []string{actionWork, actionExit}
-		if dev {
-			actions = []string{actionCreateIssue, actionWork, actionExportSnapshot, actionExit}
-			if youTrackAvailable {
-				syncActions := []string{actionSyncAll}
-				if projectHasTarget(projectConfig, "milestone") {
-					syncActions = append([]string{actionSyncMilestones}, syncActions...)
-				}
-				actions = append(syncActions, actions...)
+	actions := []string{actionWork, actionExit}
+	if dev {
+		actions = []string{actionCreateIssue, actionWork, actionExportSnapshot, actionExit}
+		if youTrackAvailable {
+			syncActions := []string{actionSyncAll}
+			if projectHasTarget(projectConfig, "milestone") {
+				syncActions = append([]string{actionSyncMilestones}, syncActions...)
 			}
-		} else if youTrackAvailable {
-			actions = append([]string{actionSync}, actions...)
+			actions = append(syncActions, actions...)
 		}
-		action, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Action", BorderLabel: "action"})
-		if err != nil {
-			fmt.Fprintf(stderr, "Cannot select an action: %v\n", err)
-			return 1
-		}
-		if !selected {
-			fmt.Fprintln(stdout, "Aborted.")
-			return 0
-		}
-		switch action {
-		case actionSync:
-			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, false, stdin, stdout, stderr)
-		case actionSyncMilestones:
-			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncMilestones, false, stdin, stdout, stderr)
-		case actionSyncAll:
-			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, false, stdin, stdout, stderr)
-		case actionCreateIssue:
-			return createIssueWorkflow(ctx, picker, client, project, youTrackAvailable, youTrackConfig, projectConfig, stdin, stdout, stderr)
-		case actionExportSnapshot:
-			return exportProjectSnapshot(ctx, client, project, stdout, stderr)
-		case actionWork:
-			return runWorkItemWorkflow(ctx, picker, client, project, stdin, stdout, stderr)
-		case actionExit:
-			fmt.Fprintln(stdout, "Done.")
-			return 0
-		}
+	} else if youTrackAvailable {
+		actions = append([]string{actionSync}, actions...)
 	}
-	sourceSnapshot, err := readYouTrackSnapshot(ctx, youTrackConfig, projectConfig)
+	action, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Action", BorderLabel: "action"})
 	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read the complete YouTrack source snapshot: %v\n", err)
+		fmt.Fprintf(stderr, "Cannot select an action: %v\n", err)
 		return 1
 	}
-	issues, err := client.ListIssues(ctx, project.ID)
-	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read all GitLab issues for %s: %v\n", project.Path, err)
-		return 1
+	if !selected {
+		fmt.Fprintln(stdout, "Aborted.")
+		return 0
 	}
-	tasks, err := client.ListTasks(ctx, project.Path)
-	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read all GitLab tasks for %s: %v\n", project.Path, err)
-		return 1
+	switch action {
+	case actionSync:
+		return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, false, stdin, stdout, stderr)
+	case actionSyncMilestones:
+		return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncMilestones, false, stdin, stdout, stderr)
+	case actionSyncAll:
+		return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, false, stdin, stdout, stderr)
+	case actionCreateIssue:
+		return createIssueWorkflow(ctx, picker, client, project, youTrackAvailable, youTrackConfig, projectConfig, stdin, stdout, stderr)
+	case actionExportSnapshot:
+		return exportProjectSnapshot(ctx, client, project, stdout, stderr)
+	case actionWork:
+		return runWorkItemWorkflow(ctx, picker, client, project, stdin, stdout, stderr)
+	case actionExit:
+		fmt.Fprintln(stdout, "Done.")
+		return 0
 	}
-	milestones, err := client.ListMilestones(ctx, project.ID)
-	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read all GitLab milestones for %s: %v\n", project.Path, err)
-		return 1
-	}
-	labels, err := client.ListLabels(ctx, project.ID)
-	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read all GitLab labels for %s: %v\n", project.Path, err)
-		return 1
-	}
-	branches, err := gitrepo.NewClient().ListRemoteBranches(ctx)
-	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read current remote branches for %s: %v\n", project.Path, err)
-		return 1
-	}
-
-	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d tasks, %d milestones, %d labels, and %d remote branches without changes; read %d YouTrack work items into memory.\n", project.Path, len(issues), len(tasks), len(milestones), len(labels), len(branches), len(sourceSnapshot.WorkItems))
+	fmt.Fprintln(stderr, "Cannot match the selected action.")
 	return 2
 }
 
