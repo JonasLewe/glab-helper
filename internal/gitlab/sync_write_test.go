@@ -13,6 +13,10 @@ func TestSyncRESTWritesUseExplicitFieldsAndForwardOnlyClose(t *testing.T) {
 	client := &Client{output: func(_ context.Context, args ...string) ([]byte, error) {
 		commands = append(commands, append([]string(nil), args...))
 		switch {
+		case reflect.DeepEqual(args[:4], []string{"api", "projects/42/labels", "-X", "POST"}):
+			return []byte(`{"id":4,"name":"status::Open"}`), nil
+		case reflect.DeepEqual(args[:4], []string{"api", "projects/42/boards/3/lists", "-X", "POST"}):
+			return []byte(`{"id":6,"label":{"name":"status::Open"}}`), nil
 		case reflect.DeepEqual(args[:4], []string{"api", "projects/42/milestones", "-X", "POST"}):
 			return []byte(`{"id":5,"title":"Release","description":"Details","state":"active"}`), nil
 		case reflect.DeepEqual(args[:4], []string{"api", "projects/42/issues", "-X", "POST"}):
@@ -22,7 +26,14 @@ func TestSyncRESTWritesUseExplicitFieldsAndForwardOnlyClose(t *testing.T) {
 		}
 	}}
 
-	if err := client.CreateLabel(context.Background(), 42, "status::Open"); err != nil {
+	label, err := client.CreateLabel(context.Background(), 42, "status::Open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if label.ID != 4 || label.Name != "status::Open" {
+		t.Fatalf("label = %#v", label)
+	}
+	if err := client.CreateBoardList(context.Background(), 42, 3, label.ID, label.Name); err != nil {
 		t.Fatal(err)
 	}
 	milestone, err := client.CreateMilestone(context.Background(), 42, "Release", "Details", true)
@@ -43,6 +54,7 @@ func TestSyncRESTWritesUseExplicitFieldsAndForwardOnlyClose(t *testing.T) {
 
 	want := [][]string{
 		{"api", "projects/42/labels", "-X", "POST", "-f", "name=status::Open", "-f", "color=#428BCA"},
+		{"api", "projects/42/boards/3/lists", "-X", "POST", "-f", "label_id=4"},
 		{"api", "projects/42/milestones", "-X", "POST", "-f", "title=Release", "-f", "description=Details"},
 		{"api", "projects/42/milestones/5", "-X", "PUT", "-f", "title=Release", "-f", "description=Details", "-f", "state_event=close"},
 		{"api", "projects/42/issues", "-X", "POST", "-f", "title=[APP-2] API", "-f", "description=Description", "-f", "labels=backend,status::Open", "-f", "issue_type=issue", "-f", "milestone_id=5"},
@@ -57,7 +69,7 @@ func TestSyncRESTWriteFailureHasContext(t *testing.T) {
 	client := &Client{output: func(context.Context, ...string) ([]byte, error) {
 		return nil, errors.New("forbidden")
 	}}
-	if err := client.CreateLabel(context.Background(), 42, "team-a"); err == nil || !strings.Contains(err.Error(), `label "team-a"`) || !strings.Contains(err.Error(), "forbidden") {
+	if _, err := client.CreateLabel(context.Background(), 42, "team-a"); err == nil || !strings.Contains(err.Error(), `label "team-a"`) || !strings.Contains(err.Error(), "forbidden") {
 		t.Fatalf("error = %v", err)
 	}
 }

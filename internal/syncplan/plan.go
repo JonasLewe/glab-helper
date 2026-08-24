@@ -22,6 +22,7 @@ type Target string
 
 const (
 	Label     Target = "label"
+	BoardList Target = "board list"
 	Milestone Target = "milestone"
 	Issue     Target = "issue"
 	Task      Target = "task"
@@ -36,6 +37,9 @@ type DesiredItem struct {
 	ParentSourceID string
 	ParentTitle    string
 	Resolved       bool
+	BoardID        int64
+	BoardName      string
+	LabelID        int64
 }
 
 type Change struct {
@@ -70,6 +74,7 @@ type Current struct {
 	Issues     []gitlab.Issue
 	Tasks      []gitlab.Task
 	Labels     []gitlab.Label
+	Boards     []gitlab.Board
 }
 
 type existingItem struct {
@@ -192,9 +197,117 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 			Desired:   DesiredItem{Target: Label, Title: label},
 		})
 	}
-	plan.Actions = append(labelActions, plan.Actions...)
+	boardListActions := desiredBoardListActions(desired, current)
+	actions := make([]Action, 0, len(labelActions)+len(boardListActions)+len(plan.Actions))
+	actions = append(actions, labelActions...)
+	actions = append(actions, boardListActions...)
+	actions = append(actions, plan.Actions...)
+	plan.Actions = actions
 	return plan, nil
 }
+
+func desiredBoardListActions(desired []DesiredItem, current Current) []Action {
+	board, found := selectStatusBoard(current.Boards)
+	if !found {
+		return nil
+	}
+
+	activeStatuses := make(map[string]string)
+	resolvedStatuses := make(map[string]struct{})
+	for _, item := range desired {
+		if item.Target != Issue && item.Target != Task {
+			continue
+		}
+		for _, label := range item.Labels {
+			if !strings.HasPrefix(label, "status::") {
+				continue
+			}
+			normalized := strings.ToLower(label)
+			if normalized == "status::open" {
+				continue
+			}
+			if item.Resolved {
+				resolvedStatuses[normalized] = struct{}{}
+				continue
+			}
+			activeStatuses[normalized] = label
+		}
+	}
+
+	labelsByName := make(map[string]gitlab.Label, len(current.Labels))
+	for _, label := range current.Labels {
+		normalized := strings.ToLower(label.Name)
+		labelsByName[normalized] = label
+		if !strings.HasPrefix(normalized, "status::") || normalized == "status::open" || isTerminalStatusLabel(normalized) {
+			continue
+		}
+		if _, resolved := resolvedStatuses[normalized]; resolved {
+			continue
+		}
+		if _, active := activeStatuses[normalized]; !active {
+			activeStatuses[normalized] = label.Name
+		}
+	}
+
+	existingLists := make(map[string]struct{}, len(board.Lists))
+	for _, list := range board.Lists {
+		if list.LabelName != "" {
+			existingLists[strings.ToLower(list.LabelName)] = struct{}{}
+		}
+	}
+
+	statusNames := make([]string, 0, len(activeStatuses))
+	for normalized := range activeStatuses {
+		if _, exists := existingLists[normalized]; !exists {
+			statusNames = append(statusNames, normalized)
+		}
+	}
+	sort.Strings(statusNames)
+
+	actions := make([]Action, 0, len(statusNames))
+	for _, normalized := range statusNames {
+		label := labelsByName[normalized]
+		actions = append(actions, Action{
+			Operation: Create,
+			Desired: DesiredItem{
+				Target:    BoardList,
+				Title:     activeStatuses[normalized],
+				BoardID:   board.ID,
+				BoardName: board.Name,
+				LabelID:   label.ID,
+			},
+		})
+	}
+	return actions
+}
+
+func selectStatusBoard(boards []gitlab.Board) (gitlab.Board, bool) {
+	if len(boards) == 0 {
+		return gitlab.Board{}, false
+	}
+	selected := boards[0]
+	for _, board := range boards {
+		if strings.EqualFold(board.Name, "Development") && (!strings.EqualFold(selected.Name, "Development") || board.ID < selected.ID) {
+			selected = board
+			continue
+		}
+		if !strings.EqualFold(selected.Name, "Development") && board.ID < selected.ID {
+			selected = board
+		}
+	}
+	return selected, true
+}
+
+func isTerminalStatusLabel(normalized string) bool {
+	value := strings.TrimSpace(strings.TrimPrefix(normalized, "status::"))
+	switch value {
+	case "done", "closed", "resolved", "complete", "completed", "finished":
+		return true
+	default:
+		return false
+	}
+}
+
 func makeDesiredItem(item source.WorkItem, target Target, itemsByID map[string]source.WorkItem, config projectconfig.Config) DesiredItem {
 	desired := DesiredItem{
 		SourceID:    item.ID,

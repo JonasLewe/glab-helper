@@ -124,6 +124,9 @@ case "$*" in
   "api --paginate projects/42/labels?per_page=100")
     printf '%s\n' '[{"id":9,"name":"team-a","color":"#5843ad"}]'
     ;;
+  "api --paginate projects/42/boards?per_page=100")
+    printf '%s\n' '[{"id":3,"name":"Development","lists":[]}]'
+    ;;
   *)
     exit 99
     ;;
@@ -162,7 +165,7 @@ printf '%s\n' "$selected"
 	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH", "")
 
-	const gitLabSnapshotCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\n"
+	const gitLabSnapshotCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\napi --paginate projects/42/boards?per_page=100\n"
 	const workItemReadCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\nfetch --prune origin --quiet\nfor-each-ref --sort=-committerdate --format=%(refname)%00%(symref) refs/heads/ refs/remotes/origin/\n"
 	tests := []struct {
 		name                 string

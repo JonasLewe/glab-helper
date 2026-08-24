@@ -9,8 +9,9 @@ the stable Zsh release until the final cutover.
   it builds and its affected behavior is checked.
 - Existing GitLab workflows are migrated while the retiring Jira source is
   replaced by the concrete YouTrack setup used by the team.
-- Target GitLab Community Edition 19.2.1. Represent the configured three-level
-  source hierarchy as milestone -> issue -> task without relying on paid epics
+- Target GitLab Community Edition 19.2.1. Represent the team's concrete
+  two-level source hierarchy as milestone -> issue, while retaining the
+  configurable milestone -> issue -> task model without relying on paid epics
   or configurable work item types. Allow source levels to be ignored while
   preserving validation of the complete YouTrack parent chain.
 - Prefer the Go standard library. Keep `glab` and `fzf` until replacing either
@@ -42,6 +43,7 @@ the stable Zsh release until the final cutover.
 - [x] 11a — Simplify the sync core without changing its supported behavior.
 - [x] 12 — List and select an existing issue or task without mutations.
 - [x] 13 — Migrate branch pruning, creation, and checkout for issues and tasks.
+- [x] 13a — Provision missing issue-board lists from synchronized status labels.
 - [ ] 14 — Migrate the remaining issue-edit actions.
 - [ ] 15 — Migrate the remaining developer actions.
 - [ ] 16 — Migrate maintenance reset last because it is destructive.

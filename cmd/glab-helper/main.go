@@ -265,11 +265,17 @@ func runSynchronization(
 		fmt.Fprintf(stderr, "Cannot read all GitLab labels for %s: %v\n", projectPath, err)
 		return 1
 	}
+	boards, err := client.ListBoards(ctx, projectID)
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read all GitLab issue boards for %s: %v\n", projectPath, err)
+		return 1
+	}
 	plan, err := syncplan.Build(sourceSnapshot, projectConfig, syncplan.Current{
 		Milestones: milestones,
 		Issues:     issues,
 		Tasks:      tasks,
 		Labels:     labels,
+		Boards:     boards,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot build a safe YouTrack synchronization preview: %v\n", err)

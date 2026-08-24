@@ -44,10 +44,10 @@ go run ./cmd/glab-helper
 ```
 
 The Go sync path validates the current GitLab project and reads every GitLab
-issue, task, milestone, and label before planning any write. Issues are
-filtered explicitly to GitLab's `issue` type; tasks and their parent issues are
-read separately through the paginated work-item GraphQL API. The binary reads
-every issue selected by the configured YouTrack query through paginated `GET`
+issue, task, milestone, label, and issue board before planning any write.
+Issues are filtered explicitly to GitLab's `issue` type; tasks and their parent
+issues are read separately through the paginated work-item GraphQL API. The
+binary reads every issue selected by the configured YouTrack query through paginated `GET`
 requests into an in-memory, provider-neutral snapshot. YouTrack is never
 written. Missing YouTrack access remains optional except in maintenance and
 synchronization-preview modes. The normal Go menu can synchronize YouTrack,
@@ -89,27 +89,32 @@ from the URL-encoded project selected by
 | Variable | Purpose |
 |---|---|
 | `YOUTRACK_URL` | Base URL of the YouTrack instance |
-| `YOUTRACK_TOKEN` | Masked, read-only permanent token |
+| `YOUTRACK_TOKEN` | Masked (not hidden), read-only permanent token |
 | `YOUTRACK_TARGET_PROJECT` | Exact target GitLab `path_with_namespace` |
 
-Non-secret, project-specific behavior lives in a versioned
-`.glab-helper.json` in the target repository. Start with the included example:
+Non-secret, project-specific behavior lives in a local `.glab-helper.json` in
+the target repository. Start with the versioned example:
 
 ```bash
 cp ~/.local/share/glab-helper/.glab-helper.json.example .glab-helper.json
 ```
+
+The glab-helper repository ignores its own `.glab-helper.json`. When the file
+is copied into another target repository, add `/.glab-helper.json` to that
+repository's `.gitignore` as well if the configuration should remain local.
+The example intentionally uses `YOUR_VERSION_TAG`; replace it with the
+YouTrack release tag for the target, for example `mind-v1`.
 
 Set `GLAB_HELPER_CONFIG` to use a different path. An explicitly selected path
 must exist; only the absent default `.glab-helper.json` is treated as an
 optional integration. The configuration defines the
 YouTrack query, the names of the type/status/priority fields, accepted type
 aliases, the ordered hierarchy, and its GitLab targets. The checked-in example
-maps the MLOps hierarchy as follows:
+maps the current two-level hierarchy as follows:
 
 ```text
-YouTrack Epic       -> GitLab milestone
-  YouTrack Feature  -> GitLab issue
-    YouTrack Story  -> GitLab task
+YouTrack Epic      -> GitLab milestone
+  YouTrack Story   -> GitLab issue
 ```
 
 This target model works with GitLab Community Edition 19.2.1. Every configured
@@ -144,6 +149,16 @@ labels and derives the scoped labels `prio::<YouTrack value>` and
 `status::<YouTrack value>`. Existing non-priority and non-status labels are
 preserved; a resolved source item may close its GitLab target, but an open
 source item never reopens a closed target.
+
+During synchronization, the Go helper also reads the project's issue boards.
+When an open synchronized issue or task uses an intermediate
+`status::<value>` label, the helper creates a missing label-based list on the
+`Development` board. If no board has that name, it uses the project board with
+the lowest ID. Existing lists are never removed or reordered. `status::Open`
+continues to use GitLab's built-in Open list, while terminal labels such as
+`status::Done` or `status::Closed` use the built-in Closed list. Board-list
+creation is included in `--dry-run` and requires the same explicit
+confirmation as every other GitLab write.
 
 Synced descriptions receive a stable
 `<!-- glab-helper:youtrack:PROJECT-123 -->` identity marker. The first preview

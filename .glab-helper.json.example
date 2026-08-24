@@ -1,7 +1,7 @@
 {
   "version": 1,
   "youtrack": {
-    "query": "project: MLOPS tag: gitlab-sync",
+    "query": "project: ARC-CS-MIND tag: YOUR_VERSION_TAG Type: Epic, {User Story}",
     "fields": {
       "kind": "Type",
       "status": "State",
@@ -13,10 +13,6 @@
         "types": ["Epic"]
       },
       {
-        "role": "feature",
-        "types": ["Feature"]
-      },
-      {
         "role": "story",
         "types": ["User Story"]
       }
@@ -25,8 +21,7 @@
   "gitlab": {
     "targets": {
       "epic": "milestone",
-      "feature": "issue",
-      "story": "task"
+      "story": "issue"
     }
   }
 }

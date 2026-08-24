@@ -40,6 +40,22 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestExampleConfigurationLoads(t *testing.T) {
+	config, err := Load(filepath.Join("..", "..", ".glab-helper.json.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(config.YouTrack.Query, "YOUR_VERSION_TAG") {
+		t.Fatalf("example query = %q, want editable version-tag placeholder", config.YouTrack.Query)
+	}
+	if len(config.YouTrack.Hierarchy) != 2 {
+		t.Fatalf("example hierarchy = %#v, want Epic and User Story", config.YouTrack.Hierarchy)
+	}
+	if config.GitLab.Targets["epic"] != "milestone" || config.GitLab.Targets["story"] != "issue" {
+		t.Fatalf("example targets = %#v, want milestone -> issue", config.GitLab.Targets)
+	}
+}
+
 func TestLoadReportsMissingConfiguration(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "missing.json"))
 	if !errors.Is(err, ErrNotFound) {

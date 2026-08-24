@@ -24,7 +24,7 @@ func TestListLabels(t *testing.T) {
 	if !reflect.DeepEqual(arguments, wantArguments) {
 		t.Fatalf("glab arguments = %q, want %q", arguments, wantArguments)
 	}
-	wantLabels := []Label{{Name: "bug"}, {Name: "team-a"}}
+	wantLabels := []Label{{ID: 10, Name: "bug"}, {ID: 11, Name: "team-a"}}
 	if !reflect.DeepEqual(labels, wantLabels) {
 		t.Fatalf("labels = %+v, want %+v", labels, wantLabels)
 	}
@@ -39,13 +39,13 @@ func TestListLabelsFailsWithoutPartialResult(t *testing.T) {
 	}{
 		{
 			name:   "request fails after output",
-			output: `[{"name":"bug"}]`,
+			output: `[{"id":10,"name":"bug"}]`,
 			err:    errors.New("later page failed"),
 			want:   "later page failed",
 		},
 		{
 			name:   "later page has invalid schema",
-			output: `[{"name":"bug"}]` + "\n" + `[{"name":false}]`,
+			output: `[{"id":10,"name":"bug"}]` + "\n" + `[{"id":11,"name":false}]`,
 			want:   "page 2 label 1",
 		},
 	}

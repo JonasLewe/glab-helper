@@ -138,6 +138,70 @@ func TestBuildRecognizesUnchangedTaskParent(t *testing.T) {
 	}
 }
 
+func TestBuildCreatesMissingStatusListsOnDevelopmentBoard(t *testing.T) {
+	current := Current{
+		Labels: []gitlab.Label{
+			{ID: 10, Name: "status::Open"},
+			{ID: 11, Name: "status::Done"},
+			{ID: 12, Name: "status::In Review"},
+		},
+		Boards: []gitlab.Board{
+			{ID: 2, Name: "Team board", Lists: []gitlab.BoardList{}},
+			{ID: 3, Name: "Development", Lists: []gitlab.BoardList{}},
+		},
+	}
+
+	plan, err := Build(fullHierarchySnapshot(), fullHierarchyConfig(), current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var boardActions []Action
+	for _, action := range plan.Actions {
+		if action.Desired.Target == BoardList {
+			boardActions = append(boardActions, action)
+		}
+	}
+	if len(boardActions) != 2 {
+		t.Fatalf("board actions = %#v, want In Progress and existing In Review label", boardActions)
+	}
+	if boardActions[0].Desired.Title != "status::In Progress" || boardActions[0].Desired.LabelID != 0 {
+		t.Fatalf("board action = %#v, want newly planned In Progress label", boardActions[0])
+	}
+	if boardActions[1].Desired.Title != "status::In Review" || boardActions[1].Desired.LabelID != 12 {
+		t.Fatalf("board action = %#v, want existing In Review label", boardActions[1])
+	}
+	for _, action := range boardActions {
+		if action.Desired.BoardID != 3 || action.Desired.BoardName != "Development" {
+			t.Fatalf("board action = %#v, want Development board", action)
+		}
+	}
+}
+
+func TestBuildKeepsExistingStatusListsAndSkipsTerminalLabels(t *testing.T) {
+	current := Current{
+		Labels: []gitlab.Label{
+			{ID: 10, Name: "status::Open"},
+			{ID: 11, Name: "status::In Progress"},
+			{ID: 12, Name: "status::Done"},
+		},
+		Boards: []gitlab.Board{{
+			ID:    3,
+			Name:  "Development",
+			Lists: []gitlab.BoardList{{ID: 21, LabelName: "status::In Progress"}},
+		}},
+	}
+
+	plan, err := Build(fullHierarchySnapshot(), fullHierarchyConfig(), current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range plan.Actions {
+		if action.Desired.Target == BoardList {
+			t.Fatalf("unexpected board list action: %#v", action)
+		}
+	}
+}
+
 func TestBuildRejectsLegacyIdentityAtWrongConfiguredTarget(t *testing.T) {
 	current := Current{Issues: []gitlab.Issue{{IID: 4, Title: "[APP-3] Implement", Description: "Old Jira issue", Labels: []string{}, State: "opened"}}}
 

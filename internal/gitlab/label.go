@@ -7,10 +7,12 @@ import (
 )
 
 type Label struct {
+	ID   int64
 	Name string
 }
 
 type labelJSON struct {
+	ID   *int64  `json:"id"`
 	Name *string `json:"name"`
 }
 
@@ -33,9 +35,12 @@ func parseLabel(data []byte) (Label, error) {
 	if err := json.Unmarshal(data, &value); err != nil {
 		return Label{}, err
 	}
+	if value.ID == nil || *value.ID < 1 {
+		return Label{}, fmt.Errorf("missing or invalid field %q", "id")
+	}
 	if value.Name == nil {
 		return Label{}, fmt.Errorf("missing or invalid field %q", "name")
 	}
 
-	return Label{Name: *value.Name}, nil
+	return Label{ID: *value.ID, Name: *value.Name}, nil
 }

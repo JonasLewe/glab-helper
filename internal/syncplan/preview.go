@@ -30,6 +30,10 @@ func writeAction(writer io.Writer, action Action) {
 		fmt.Fprintf(writer, "CREATE label %q\n", action.Desired.Title)
 		return
 	}
+	if action.Desired.Target == BoardList {
+		fmt.Fprintf(writer, "CREATE board list %q on %q\n", action.Desired.Title, action.Desired.BoardName)
+		return
+	}
 	reference := action.Desired.SourceID
 	if action.Operation == Update {
 		if action.Desired.Target == Milestone {

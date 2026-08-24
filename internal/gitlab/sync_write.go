@@ -60,11 +60,34 @@ type workItemQueryJSON struct {
 	} `json:"namespace"`
 }
 
-func (client *Client) CreateLabel(ctx context.Context, projectID int64, name string) error {
+func (client *Client) CreateLabel(ctx context.Context, projectID int64, name string) (Label, error) {
 	endpoint := fmt.Sprintf("projects/%d/labels", projectID)
-	_, err := client.output(ctx, "api", endpoint, "-X", "POST", "-f", "name="+name, "-f", "color="+defaultSyncLabelColor)
+	output, err := client.output(ctx, "api", endpoint, "-X", "POST", "-f", "name="+name, "-f", "color="+defaultSyncLabelColor)
 	if err != nil {
-		return fmt.Errorf("create GitLab label %q: %w", name, err)
+		return Label{}, fmt.Errorf("create GitLab label %q: %w", name, err)
+	}
+	label, err := parseLabel(output)
+	if err != nil {
+		return Label{}, fmt.Errorf("decode created GitLab label %q: %w", name, err)
+	}
+	if label.Name != name {
+		return Label{}, fmt.Errorf("created GitLab label has unexpected name %q", label.Name)
+	}
+	return label, nil
+}
+
+func (client *Client) CreateBoardList(ctx context.Context, projectID, boardID, labelID int64, labelName string) error {
+	endpoint := fmt.Sprintf("projects/%d/boards/%d/lists", projectID, boardID)
+	output, err := client.output(ctx, "api", endpoint, "-X", "POST", "-f", "label_id="+strconv.FormatInt(labelID, 10))
+	if err != nil {
+		return fmt.Errorf("create GitLab board list for label %q: %w", labelName, err)
+	}
+	list, err := parseBoardList(output)
+	if err != nil {
+		return fmt.Errorf("decode created GitLab board list for label %q: %w", labelName, err)
+	}
+	if !strings.EqualFold(list.LabelName, labelName) {
+		return fmt.Errorf("created GitLab board list has unexpected label %q", list.LabelName)
 	}
 	return nil
 }

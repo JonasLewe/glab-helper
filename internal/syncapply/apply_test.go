@@ -24,8 +24,15 @@ func (client *fakeClient) record(call string) error {
 	return nil
 }
 
-func (client *fakeClient) CreateLabel(_ context.Context, _ int64, name string) error {
-	return client.record("label:" + name)
+func (client *fakeClient) CreateLabel(_ context.Context, _ int64, name string) (gitlab.Label, error) {
+	if err := client.record("label:" + name); err != nil {
+		return gitlab.Label{}, err
+	}
+	return gitlab.Label{ID: 44, Name: name}, nil
+}
+
+func (client *fakeClient) CreateBoardList(_ context.Context, _, boardID, labelID int64, labelName string) error {
+	return client.record(fmt.Sprintf("board-list:%d:%d:%s", boardID, labelID, labelName))
 }
 
 func (client *fakeClient) CreateMilestone(_ context.Context, _ int64, title, _ string, close bool) (gitlab.Milestone, error) {
@@ -83,6 +90,7 @@ func (client *fakeClient) SetWorkItemParent(_ context.Context, taskID, parentID 
 func TestApplyCreatesHierarchyInDependencyOrder(t *testing.T) {
 	plan := syncplan.Plan{Actions: []syncplan.Action{
 		{Operation: syncplan.Create, Desired: syncplan.DesiredItem{Target: syncplan.Label, Title: "team-a"}},
+		{Operation: syncplan.Create, Desired: syncplan.DesiredItem{Target: syncplan.BoardList, Title: "team-a", BoardID: 3, BoardName: "Development"}},
 		{Operation: syncplan.Create, Desired: syncplan.DesiredItem{Target: syncplan.Milestone, SourceID: "APP-1", Title: "Platform", Description: "Epic"}},
 		{Operation: syncplan.Create, Desired: syncplan.DesiredItem{Target: syncplan.Issue, SourceID: "APP-2", Title: "[APP-2] API", Description: "Feature", ParentSourceID: "APP-1"}},
 		{Operation: syncplan.Create, Desired: syncplan.DesiredItem{Target: syncplan.Task, SourceID: "APP-3", Title: "[APP-3] Implement", Description: "Story", Labels: []string{"team-a"}, ParentSourceID: "APP-2", Resolved: true}},
@@ -93,11 +101,12 @@ func TestApplyCreatesHierarchyInDependencyOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Applied != 4 || result.Total != 4 {
+	if result.Applied != 5 || result.Total != 5 {
 		t.Fatalf("result = %#v", result)
 	}
 	wantCalls := []string{
 		"label:team-a",
+		"board-list:3:44:team-a",
 		"milestone:Platform:false",
 		"issue:[APP-2] API:11:false",
 		"work-item-id:Issue:22",
@@ -157,6 +166,21 @@ func TestApplyValidatesEntirePlanBeforeWrites(t *testing.T) {
 
 	if _, err := Apply(context.Background(), client, 42, "group/project", plan); err == nil {
 		t.Fatal("invalid plan was accepted")
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("writes occurred before validation: %q", client.calls)
+	}
+}
+
+func TestApplyRejectsBoardListWithoutAvailableLabel(t *testing.T) {
+	plan := syncplan.Plan{Actions: []syncplan.Action{{
+		Operation: syncplan.Create,
+		Desired:   syncplan.DesiredItem{Target: syncplan.BoardList, Title: "status::Open", BoardID: 3, BoardName: "Development"},
+	}}}
+	client := &fakeClient{}
+
+	if _, err := Apply(context.Background(), client, 42, "group/project", plan); err == nil {
+		t.Fatal("board list without an available label was accepted")
 	}
 	if len(client.calls) != 0 {
 		t.Fatalf("writes occurred before validation: %q", client.calls)

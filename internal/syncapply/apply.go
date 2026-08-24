@@ -10,7 +10,8 @@ import (
 )
 
 type Client interface {
-	CreateLabel(context.Context, int64, string) error
+	CreateLabel(context.Context, int64, string) (gitlab.Label, error)
+	CreateBoardList(context.Context, int64, int64, int64, string) error
 	CreateMilestone(context.Context, int64, string, string, bool) (gitlab.Milestone, error)
 	UpdateMilestone(context.Context, int64, int64, string, string, bool) error
 	CreateIssue(context.Context, int64, string, string, []string, *int64, bool) (gitlab.CreatedIssue, error)
@@ -43,21 +44,45 @@ func Apply(ctx context.Context, client Client, projectID int64, projectPath stri
 		}
 	}
 	taskTypeID := ""
+	labelIDs := make(map[string]int64)
+	for _, action := range plan.Actions {
+		if action.Desired.Target == syncplan.BoardList && action.Desired.LabelID > 0 {
+			labelIDs[action.Desired.Title] = action.Desired.LabelID
+		}
+	}
 
 	for index, action := range plan.Actions {
-		if err := applyAction(ctx, client, projectID, projectPath, action, references, workItemIDs, &taskTypeID); err != nil {
-			return result, fmt.Errorf("action %d of %d (%s %s from %q): %w", index+1, len(plan.Actions), action.Operation, action.Desired.Target, action.Desired.SourceID, err)
+		if err := applyAction(ctx, client, projectID, projectPath, action, references, workItemIDs, labelIDs, &taskTypeID); err != nil {
+			identity := action.Desired.SourceID
+			if identity == "" {
+				identity = action.Desired.Title
+			}
+			return result, fmt.Errorf("action %d of %d (%s %s %q): %w", index+1, len(plan.Actions), action.Operation, action.Desired.Target, identity, err)
 		}
 		result.Applied++
 	}
 	return result, nil
 }
 
-func applyAction(ctx context.Context, client Client, projectID int64, projectPath string, action syncplan.Action, references map[string]syncplan.Reference, workItemIDs map[string]string, taskTypeID *string) error {
+func applyAction(ctx context.Context, client Client, projectID int64, projectPath string, action syncplan.Action, references map[string]syncplan.Reference, workItemIDs map[string]string, labelIDs map[string]int64, taskTypeID *string) error {
 	desired := action.Desired
 	switch desired.Target {
 	case syncplan.Label:
-		return client.CreateLabel(ctx, projectID, desired.Title)
+		label, err := client.CreateLabel(ctx, projectID, desired.Title)
+		if err != nil {
+			return err
+		}
+		labelIDs[label.Name] = label.ID
+		return nil
+	case syncplan.BoardList:
+		labelID := desired.LabelID
+		if labelID < 1 {
+			labelID = labelIDs[desired.Title]
+		}
+		if labelID < 1 {
+			return fmt.Errorf("board list label %q has no resolved GitLab label ID", desired.Title)
+		}
+		return client.CreateBoardList(ctx, projectID, desired.BoardID, labelID, desired.Title)
 	case syncplan.Milestone:
 		if action.Operation == syncplan.Create {
 			milestone, err := client.CreateMilestone(ctx, projectID, desired.Title, desired.Description, desired.Resolved)
@@ -176,6 +201,13 @@ func validatePlan(plan syncplan.Plan) error {
 		available[sourceID] = reference.Target
 	}
 	seenActions := make(map[string]struct{})
+	availableLabels := make(map[string]struct{})
+	seenBoardLists := make(map[string]struct{})
+	for _, action := range plan.Actions {
+		if action.Desired.Target == syncplan.BoardList && action.Desired.LabelID > 0 {
+			availableLabels[action.Desired.Title] = struct{}{}
+		}
+	}
 	for index, action := range plan.Actions {
 		if action.Operation != syncplan.Create && action.Operation != syncplan.Update {
 			return fmt.Errorf("action %d has unsupported operation %q", index+1, action.Operation)
@@ -184,6 +216,21 @@ func validatePlan(plan syncplan.Plan) error {
 			if action.Operation != syncplan.Create || action.Desired.Title == "" {
 				return fmt.Errorf("action %d has invalid label operation", index+1)
 			}
+			availableLabels[action.Desired.Title] = struct{}{}
+			continue
+		}
+		if action.Desired.Target == syncplan.BoardList {
+			if action.Operation != syncplan.Create || action.Desired.Title == "" || action.Desired.BoardID < 1 || action.Desired.BoardName == "" {
+				return fmt.Errorf("action %d has invalid board list operation", index+1)
+			}
+			if _, exists := availableLabels[action.Desired.Title]; !exists {
+				return fmt.Errorf("action %d board list label %q is not available", index+1, action.Desired.Title)
+			}
+			identity := strconv.FormatInt(action.Desired.BoardID, 10) + ":" + action.Desired.Title
+			if _, exists := seenBoardLists[identity]; exists {
+				return fmt.Errorf("board list %q has multiple actions", identity)
+			}
+			seenBoardLists[identity] = struct{}{}
 			continue
 		}
 		if action.Desired.SourceID == "" || action.Desired.Title == "" {
