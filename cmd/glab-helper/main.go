@@ -133,15 +133,43 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
+	picker := ui.NewPicker()
 	if dryRun {
-		return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, true, stdin, stdout, stderr)
+		if !dev {
+			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, true, stdin, stdout, stderr)
+		}
+		actions := []string{actionPreviewAll, actionExit}
+		if projectHasTarget(projectConfig, "milestone") {
+			actions = append([]string{actionPreviewMilestones}, actions...)
+		}
+		action, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Developer preview", BorderLabel: "developer previews"})
+		if err != nil {
+			fmt.Fprintf(stderr, "Cannot select a developer preview: %v\n", err)
+			return 1
+		}
+		if !selected || action == actionExit {
+			fmt.Fprintln(stdout, "Done.")
+			return 0
+		}
+		if action == actionPreviewMilestones {
+			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncMilestones, true, stdin, stdout, stderr)
+		}
+		return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, true, stdin, stdout, stderr)
 	}
 	if !maintenance {
 		actions := []string{actionWork, actionExit}
-		if youTrackAvailable {
+		if dev {
+			actions = []string{actionCreateIssue, actionWork, actionExportSnapshot, actionExit}
+			if youTrackAvailable {
+				syncActions := []string{actionSyncAll}
+				if projectHasTarget(projectConfig, "milestone") {
+					syncActions = append([]string{actionSyncMilestones}, syncActions...)
+				}
+				actions = append(syncActions, actions...)
+			}
+		} else if youTrackAvailable {
 			actions = append([]string{actionSync}, actions...)
 		}
-		picker := ui.NewPicker()
 		action, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Action", BorderLabel: "action"})
 		if err != nil {
 			fmt.Fprintf(stderr, "Cannot select an action: %v\n", err)
@@ -153,29 +181,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		switch action {
 		case actionSync:
-			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, false, stdin, stdout, stderr)
+			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, false, stdin, stdout, stderr)
+		case actionSyncMilestones:
+			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncMilestones, false, stdin, stdout, stderr)
+		case actionSyncAll:
+			return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, false, stdin, stdout, stderr)
+		case actionCreateIssue:
+			return createIssueWorkflow(ctx, picker, client, project, youTrackAvailable, youTrackConfig, projectConfig, stdin, stdout, stderr)
+		case actionExportSnapshot:
+			return exportProjectSnapshot(ctx, client, project, stdout, stderr)
 		case actionWork:
-			issues, err := client.ListIssues(ctx, project.ID)
-			if err != nil {
-				fmt.Fprintf(stderr, "Cannot read all GitLab issues for %s: %v\n", project.Path, err)
-				return 1
-			}
-			tasks, err := client.ListTasks(ctx, project.Path)
-			if err != nil {
-				fmt.Fprintf(stderr, "Cannot read all GitLab tasks for %s: %v\n", project.Path, err)
-				return 1
-			}
-			gitClient := gitrepo.NewClient()
-			if err := gitClient.PruneRemoteBranches(ctx); err != nil {
-				fmt.Fprintf(stderr, "Cannot refresh remote branches for %s: %v\n", project.Path, err)
-				return 1
-			}
-			branches, err := gitClient.ListBranches(ctx)
-			if err != nil {
-				fmt.Fprintf(stderr, "Cannot read current local and remote branches for %s: %v\n", project.Path, err)
-				return 1
-			}
-			return selectWorkItem(ctx, picker, client, gitClient, project.ID, issues, tasks, branches, project.DefaultBranch, stdin, stdout, stderr)
+			return runWorkItemWorkflow(ctx, picker, client, project, stdin, stdout, stderr)
 		case actionExit:
 			fmt.Fprintln(stdout, "Done.")
 			return 0
@@ -242,6 +258,7 @@ func runSynchronization(
 	projectPath string,
 	youTrackConfig youtrack.Config,
 	projectConfig projectconfig.Config,
+	scope synchronizationScope,
 	dryRun bool,
 	stdin io.Reader,
 	stdout, stderr io.Writer,
@@ -249,6 +266,11 @@ func runSynchronization(
 	sourceSnapshot, err := readYouTrackSnapshot(ctx, youTrackConfig, projectConfig)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot read the complete YouTrack source snapshot: %v\n", err)
+		return 1
+	}
+	syncConfig, err := projectConfigForScope(projectConfig, scope)
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot prepare the selected YouTrack synchronization scope: %v\n", err)
 		return 1
 	}
 	issues, err := client.ListIssues(ctx, projectID)
@@ -276,7 +298,7 @@ func runSynchronization(
 		fmt.Fprintf(stderr, "Cannot read all GitLab issue boards for %s: %v\n", projectPath, err)
 		return 1
 	}
-	plan, err := syncplan.Build(sourceSnapshot, projectConfig, syncplan.Current{
+	plan, err := syncplan.Build(sourceSnapshot, syncConfig, syncplan.Current{
 		Milestones: milestones,
 		Issues:     issues,
 		Tasks:      tasks,
@@ -310,6 +332,30 @@ func runSynchronization(
 	}
 	fmt.Fprintf(stdout, "Applied %d GitLab synchronization actions. YouTrack remained read-only.\n", result.Applied)
 	return 0
+}
+
+func runWorkItemWorkflow(ctx context.Context, picker *ui.Picker, client *gitlab.Client, project gitlab.Project, stdin io.Reader, stdout, stderr io.Writer) int {
+	issues, err := client.ListIssues(ctx, project.ID)
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read all GitLab issues for %s: %v\n", project.Path, err)
+		return 1
+	}
+	tasks, err := client.ListTasks(ctx, project.Path)
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read all GitLab tasks for %s: %v\n", project.Path, err)
+		return 1
+	}
+	gitClient := gitrepo.NewClient()
+	if err := gitClient.PruneRemoteBranches(ctx); err != nil {
+		fmt.Fprintf(stderr, "Cannot refresh remote branches for %s: %v\n", project.Path, err)
+		return 1
+	}
+	branches, err := gitClient.ListBranches(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "Cannot read current local and remote branches for %s: %v\n", project.Path, err)
+		return 1
+	}
+	return selectWorkItem(ctx, picker, client, gitClient, project.ID, issues, tasks, branches, project.DefaultBranch, stdin, stdout, stderr)
 }
 
 func selectWorkItem(

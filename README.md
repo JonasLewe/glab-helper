@@ -90,6 +90,28 @@ Descriptions open in `VISUAL`, then `EDITOR`, with `nvim`, `vim`, or `vi` as
 fallbacks. A selected GitLab task exposes only branch management until the
 task-editing API is migrated separately.
 
+The Go `--dev` menu additionally provides:
+
+- a milestone-only YouTrack sync and the complete work-item sync;
+- creation of one selected, not-yet-synchronized YouTrack issue with only its
+  required labels, board list, and parent milestone;
+- manual GitLab issue creation with existing or newly planned labels, an
+  optional assignee, and an existing or newly planned milestone;
+- a local export of all project issues, milestones, and labels.
+
+`--dev --dry-run` exposes the granular milestone-only and complete previews but
+no write actions. The milestone-only mode still reads and validates the full
+YouTrack hierarchy before projecting non-milestone targets to `ignore` for that
+single plan. Creating from YouTrack also uses the normal synchronization planner
+and confirmation instead of a separate write path. Manual creation delays new
+labels and milestones until the final confirmation and offers the regular
+branch workflow after the issue exists.
+
+Snapshot exports are written as private JSON files below
+`.glab-helper-snapshots/` in the target repository. The directory contains
+`issues.json`, `milestones.json`, `labels.json`, and `metadata.json` and is the
+same backup format used by the upcoming maintenance migration.
+
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by
 `GLAB_HELPER_YOUTRACK_PROJECT_PATH`:
@@ -107,9 +129,15 @@ the target repository. Start with the versioned example:
 cp ~/.local/share/glab-helper/.glab-helper.json.example .glab-helper.json
 ```
 
-The glab-helper repository ignores its own `.glab-helper.json`. When the file
-is copied into another target repository, add `/.glab-helper.json` to that
-repository's `.gitignore` as well if the configuration should remain local.
+The glab-helper repository ignores its own local configuration and snapshots.
+In another target repository, add these entries to that repository's
+`.gitignore` as well:
+
+```gitignore
+/.glab-helper.json
+/.glab-helper-snapshots/
+```
+
 The example intentionally uses `YOUR_VERSION_TAG`; replace it with the
 YouTrack release tag for the target, for example `mind-v1`.
 

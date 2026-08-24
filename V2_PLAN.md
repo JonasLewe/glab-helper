@@ -45,7 +45,7 @@ the stable Zsh release until the final cutover.
 - [x] 13 — Migrate branch pruning, creation, and checkout for issues and tasks.
 - [x] 13a — Provision missing issue-board lists from synchronized status labels.
 - [x] 14 — Migrate the remaining issue-edit actions.
-- [ ] 15 — Migrate the remaining developer actions.
+- [x] 15 — Migrate the remaining developer actions.
 - [ ] 16 — Migrate maintenance reset last because it is destructive.
 - [ ] 16a — Polish the interactive terminal UX: show a compact glab-helper
   startup logo after clearing the screen and add optional color highlights only

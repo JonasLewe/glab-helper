@@ -51,6 +51,14 @@ func TestSyncRESTWritesUseExplicitFieldsAndForwardOnlyClose(t *testing.T) {
 	if issue.IID != 7 {
 		t.Fatalf("issue = %#v", issue)
 	}
+	assigneeID := int64(6)
+	manualIssue, err := client.CreateManualIssue(context.Background(), 42, "Manual issue", "Details", []string{"backend"}, &milestoneID, &assigneeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manualIssue.IID != 7 {
+		t.Fatalf("manual issue = %#v", manualIssue)
+	}
 
 	want := [][]string{
 		{"api", "projects/42/labels", "-X", "POST", "-f", "name=status::Open", "-f", "color=#428BCA"},
@@ -59,6 +67,7 @@ func TestSyncRESTWritesUseExplicitFieldsAndForwardOnlyClose(t *testing.T) {
 		{"api", "projects/42/milestones/5", "-X", "PUT", "-f", "title=Release", "-f", "description=Details", "-f", "state_event=close"},
 		{"api", "projects/42/issues", "-X", "POST", "-f", "title=[APP-2] API", "-f", "description=Description", "-f", "labels=backend,status::Open", "-f", "issue_type=issue", "-f", "milestone_id=5"},
 		{"api", "projects/42/issues/7", "-X", "PUT", "-f", "title=[APP-2] API", "-f", "description=Description", "-f", "labels=backend,status::Open", "-f", "milestone_id=5", "-f", "state_event=close"},
+		{"api", "projects/42/issues", "-X", "POST", "-f", "title=Manual issue", "-f", "description=Details", "-f", "labels=backend", "-f", "issue_type=issue", "-f", "milestone_id=5", "-f", "assignee_id=6"},
 	}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
@@ -71,6 +80,33 @@ func TestSyncRESTWriteFailureHasContext(t *testing.T) {
 	}}
 	if _, err := client.CreateLabel(context.Background(), 42, "team-a"); err == nil || !strings.Contains(err.Error(), `label "team-a"`) || !strings.Contains(err.Error(), "forbidden") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestManualDependencyWritesPreserveChosenFields(t *testing.T) {
+	var commands [][]string
+	client := &Client{output: func(_ context.Context, args ...string) ([]byte, error) {
+		commands = append(commands, append([]string(nil), args...))
+		if strings.Contains(args[1], "/labels") {
+			return []byte(`{"id":4,"name":"team-a"}`), nil
+		}
+		return []byte(`{"id":5,"title":"Release 2","description":null,"state":"active"}`), nil
+	}}
+
+	label, err := client.CreateLabelWithColor(context.Background(), 42, "team-a", "#E44D2E")
+	if err != nil || label.ID != 4 {
+		t.Fatalf("label = %#v, error = %v", label, err)
+	}
+	milestone, err := client.CreateManualMilestone(context.Background(), 42, "Release 2", "2026-09-30")
+	if err != nil || milestone.ID != 5 {
+		t.Fatalf("milestone = %#v, error = %v", milestone, err)
+	}
+	want := [][]string{
+		{"api", "projects/42/labels", "-X", "POST", "-f", "name=team-a", "-f", "color=#E44D2E"},
+		{"api", "projects/42/milestones", "-X", "POST", "-f", "title=Release 2", "-f", "due_date=2026-09-30"},
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
 	}
 }
 

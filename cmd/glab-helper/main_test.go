@@ -193,6 +193,13 @@ printf '%s\n' "$selected"
 			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + gitLabSnapshotCommands,
 		},
 		{
+			name:              "developer milestone preview",
+			args:              []string{"--dev", "--dry-run"},
+			code:              0,
+			wantOutput:        "no GitLab or YouTrack changes have been applied",
+			wantCommandSuffix: "api projects/group%2Fproject/variables/YOUTRACK_URL\napi projects/group%2Fproject/variables/YOUTRACK_TOKEN\napi projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT\n" + gitLabSnapshotCommands,
+		},
+		{
 			name:              "apply requires explicit confirmation",
 			snapshot:          source.Snapshot{WorkItems: []source.WorkItem{{ID: "APP-1", Title: "New Platform", Description: "Epic details", Kind: "Epic", Role: "epic"}}},
 			code:              0,
@@ -529,6 +536,358 @@ esac
 		"api projects/42/issues/7 -X PUT -f state_event=close",
 	} {
 		if !strings.Contains(string(commands), want+"\n") {
+			t.Fatalf("commands %q do not contain %q", commands, want)
+		}
+	}
+}
+
+func TestDeveloperManualIssueCreation(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	t.Chdir(temporaryDirectory)
+	commandLog := filepath.Join(temporaryDirectory, "commands")
+	glabPath := filepath.Join(temporaryDirectory, "glab")
+	fzfPath := filepath.Join(temporaryDirectory, "fzf")
+	editorPath := filepath.Join(temporaryDirectory, "editor")
+
+	glabStub := `#!/bin/sh
+printf '%s\n' "$*" >>"$COMMAND_LOG"
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project","default_branch":"main"}'
+    ;;
+  "api --paginate projects/42/labels?per_page=100")
+    printf '%s\n' '[{"id":3,"name":"backend"},{"id":4,"name":"team-a"}]'
+    ;;
+  "api --paginate projects/42/members/all?per_page=100")
+    printf '%s\n' '[{"id":6,"username":"sam","name":"Sam Example"}]'
+    ;;
+  "api --paginate projects/42/milestones?per_page=100")
+    printf '%s\n' '[{"id":9,"title":"Next","description":null,"state":"active"}]'
+    ;;
+  "api projects/42/issues -X POST"*)
+    printf '%s\n' '{"iid":11}'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	fzfStub := `#!/bin/sh
+case "$*" in
+  *"Action >"*)
+    printf '%s\n' 'Create GitLab issue'
+    ;;
+  *"Labels >"*)
+    printf '%s\n' 'Label: backend'
+    printf '%s\n' 'Label: team-a'
+    ;;
+  *"Assignee >"*)
+    printf '%s\n' 'sam (Sam Example)'
+    ;;
+  *"Milestone >"*)
+    printf '%s\n' 'Next [milestone 9]'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	editorStub := "#!/bin/sh\nprintf '%s' 'Manual details' >\"$1\"\n"
+	for path, content := range map[string]string{glabPath: glabStub, fzfPath: fzfStub, editorPath: editorStub} {
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("COMMAND_LOG", commandLog)
+	t.Setenv("VISUAL", editorPath)
+	t.Setenv("EDITOR", "")
+	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--dev"}, strings.NewReader("Manual issue\ny\nn\n"), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d; stdout: %s; stderr: %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Created GitLab issue #11") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "api projects/42/issues -X POST -f title=Manual issue -f description=Manual details -f labels=backend,team-a -f issue_type=issue -f milestone_id=9 -f assignee_id=6\n"
+	if !strings.Contains(string(commands), want) {
+		t.Fatalf("commands %q do not contain %q", commands, want)
+	}
+}
+
+func TestDeveloperManualIssueCreationPlansNewDependencies(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	t.Chdir(temporaryDirectory)
+	commandLog := filepath.Join(temporaryDirectory, "commands")
+	fzfState := filepath.Join(temporaryDirectory, "fzf-state")
+	glabPath := filepath.Join(temporaryDirectory, "glab")
+	fzfPath := filepath.Join(temporaryDirectory, "fzf")
+	editorPath := filepath.Join(temporaryDirectory, "editor")
+
+	glabStub := `#!/bin/sh
+printf '%s\n' "$*" >>"$COMMAND_LOG"
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project","default_branch":"main"}'
+    ;;
+  "api --paginate projects/42/labels?per_page=100"|"api --paginate projects/42/members/all?per_page=100"|"api --paginate projects/42/milestones?per_page=100")
+    printf '%s\n' '[]'
+    ;;
+  "api projects/42/labels -X POST"*)
+    printf '%s\n' '{"id":4,"name":"frontend"}'
+    ;;
+  "api projects/42/milestones -X POST"*)
+    printf '%s\n' '{"id":5,"title":"Release 2","description":null,"state":"active"}'
+    ;;
+  "api projects/42/issues -X POST"*)
+    printf '%s\n' '{"iid":12}'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	fzfStub := `#!/bin/sh
+case "$*" in
+  *"Action >"*)
+    printf '%s\n' 'Create GitLab issue'
+    ;;
+  *"Labels >"*)
+    step=0
+    if [ -f "$FZF_STATE" ]; then step=$(cat "$FZF_STATE"); fi
+    step=$((step + 1))
+    printf '%s\n' "$step" >"$FZF_STATE"
+    if [ "$step" = 1 ]; then
+      printf '%s\n' 'Create new label...'
+    else
+      printf '%s\n' 'New label: frontend'
+    fi
+    ;;
+  *"Assignee >"*)
+    printf '%s\n' 'No assignee'
+    ;;
+  *"Milestone >"*)
+    printf '%s\n' 'Create new milestone...'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	editorStub := "#!/bin/sh\nprintf '%s' 'New dependency details' >\"$1\"\n"
+	for path, content := range map[string]string{glabPath: glabStub, fzfPath: fzfStub, editorPath: editorStub} {
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("COMMAND_LOG", commandLog)
+	t.Setenv("FZF_STATE", fzfState)
+	t.Setenv("VISUAL", editorPath)
+	t.Setenv("EDITOR", "")
+	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	input := "New capability\nfrontend\n#112233\nRelease 2\n2026-09-30\ny\nn\n"
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--dev"}, strings.NewReader(input), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d; stdout: %s; stderr: %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Created GitLab issue #12") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"api projects/42/labels -X POST -f name=frontend -f color=#112233",
+		"api projects/42/milestones -X POST -f title=Release 2 -f due_date=2026-09-30",
+		"api projects/42/issues -X POST -f title=New capability -f description=New dependency details -f labels=frontend -f issue_type=issue -f milestone_id=5",
+	} {
+		if !strings.Contains(string(commands), want+"\n") {
+			t.Fatalf("commands %q do not contain %q", commands, want)
+		}
+	}
+}
+
+func TestDeveloperSnapshotExport(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	t.Chdir(temporaryDirectory)
+	glabPath := filepath.Join(temporaryDirectory, "glab")
+	fzfPath := filepath.Join(temporaryDirectory, "fzf")
+
+	glabStub := `#!/bin/sh
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project","default_branch":"main"}'
+    ;;
+  "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100")
+    printf '%s\n' '[{"iid":7,"title":"Issue","description":"Details","labels":[],"milestone":null,"state":"opened","assignees":[]}]'
+    ;;
+  "api --paginate projects/42/milestones?per_page=100")
+    printf '%s\n' '[{"id":8,"title":"Release","description":null,"state":"active"}]'
+    ;;
+  "api --paginate projects/42/labels?per_page=100")
+    printf '%s\n' '[{"id":9,"name":"team-a"}]'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	fzfStub := `#!/bin/sh
+printf '%s\n' 'Export GitLab snapshot'
+`
+	for path, content := range map[string]string{glabPath: glabStub, fzfPath: fzfStub} {
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--dev"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d; stdout: %s; stderr: %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Exported GitLab snapshot to .glab-helper-snapshots/") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	entries, err := os.ReadDir(filepath.Join(temporaryDirectory, ".glab-helper-snapshots"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !entries[0].IsDir() {
+		t.Fatalf("snapshot entries = %#v", entries)
+	}
+	for _, name := range []string{"issues.json", "milestones.json", "labels.json", "metadata.json"} {
+		if _, err := os.Stat(filepath.Join(temporaryDirectory, ".glab-helper-snapshots", entries[0].Name(), name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDeveloperCreatesOneUnsynchronizedYouTrackIssue(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	t.Chdir(temporaryDirectory)
+	commandLog := filepath.Join(temporaryDirectory, "commands")
+	glabPath := filepath.Join(temporaryDirectory, "glab")
+	fzfPath := filepath.Join(temporaryDirectory, "fzf")
+	projectConfigPath := filepath.Join(temporaryDirectory, "project-config.json")
+	projectConfiguration := `{
+  "version": 1,
+  "youtrack": {
+    "query": "project: APP tag: release-v1",
+    "fields": {"kind": "Type", "status": "State", "priority": "Priority"},
+    "hierarchy": [
+      {"role": "epic", "types": ["Epic"]},
+      {"role": "story", "types": ["User Story"]}
+    ]
+  },
+  "gitlab": {"targets": {"epic": "milestone", "story": "issue"}}
+}`
+	if err := os.WriteFile(projectConfigPath, []byte(projectConfiguration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	glabStub := `#!/bin/sh
+printf '%s\n' "$*" >>"$COMMAND_LOG"
+if [ "$1 $2" = "api graphql" ]; then
+  printf '%s\n' '{"data":{"namespace":{"workItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+  exit 0
+fi
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project","default_branch":"main"}'
+    ;;
+  "api projects/group%2Fproject/variables/YOUTRACK_URL")
+    printf '%s\n' '{"value":"https://youtrack.example.com"}'
+    ;;
+  "api projects/group%2Fproject/variables/YOUTRACK_TOKEN")
+    printf '%s\n' '{"value":"secret-token"}'
+    ;;
+  "api projects/group%2Fproject/variables/YOUTRACK_TARGET_PROJECT")
+    printf '%s\n' '{"value":"group/project"}'
+    ;;
+  "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100"|"api --paginate projects/42/milestones?per_page=100"|"api --paginate projects/42/labels?per_page=100")
+    printf '%s\n' '[]'
+    ;;
+  "api --paginate projects/42/boards?per_page=100")
+    printf '%s\n' '[{"id":3,"name":"Development","lists":[]}]'
+    ;;
+  "api projects/42/labels -X POST -f name=release-v1 -f color=#428BCA")
+    printf '%s\n' '{"id":4,"name":"release-v1"}'
+    ;;
+  "api projects/42/labels -X POST -f name=prio::Major -f color=#428BCA")
+    printf '%s\n' '{"id":5,"name":"prio::Major"}'
+    ;;
+  "api projects/42/labels -X POST -f name=status::Open -f color=#428BCA")
+    printf '%s\n' '{"id":6,"name":"status::Open"}'
+    ;;
+  "api projects/42/milestones -X POST"*)
+    printf '%s\n' '{"id":8,"title":"Release","description":"Epic details\n\n<!-- glab-helper:youtrack:APP-1 -->","state":"active"}'
+    ;;
+  "api projects/42/issues -X POST"*)
+    printf '%s\n' '{"iid":7}'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	fzfStub := `#!/bin/sh
+case "$*" in
+  *"Action >"*)
+    printf '%s\n' 'Create GitLab issue'
+    ;;
+  *"Create issue >"*)
+    printf '%s\n' 'From YouTrack'
+    ;;
+  *"YouTrack issue >"*)
+    IFS= read -r selected
+    printf '%s\n' "$selected"
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	for path, content := range map[string]string{glabPath: glabStub, fzfPath: fzfStub} {
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("COMMAND_LOG", commandLog)
+	t.Setenv("GLAB_HELPER_CONFIG", projectConfigPath)
+	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	previousReadYouTrackSnapshot := readYouTrackSnapshot
+	readYouTrackSnapshot = func(context.Context, youtrack.Config, projectconfig.Config) (source.Snapshot, error) {
+		return source.Snapshot{WorkItems: []source.WorkItem{
+			{ID: "APP-1", Title: "Release", Description: "Epic details", Kind: "Epic", Role: "epic", Status: "Open"},
+			{ID: "APP-2", Title: "Parser", Description: "Story details", Kind: "User Story", Role: "story", Status: "Open", Priority: "Major", Tags: []string{"release-v1"}, ParentID: "APP-1"},
+		}}, nil
+	}
+	defer func() { readYouTrackSnapshot = previousReadYouTrackSnapshot }()
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--dev"}, strings.NewReader("y\n"), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d; stdout: %s; stderr: %s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Applied 5 GitLab actions for the selected YouTrack issue") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"api projects/42/milestones -X POST -f title=Release",
+		"api projects/42/issues -X POST -f title=[APP-2] Parser",
+	} {
+		if !strings.Contains(string(commands), want) {
 			t.Fatalf("commands %q do not contain %q", commands, want)
 		}
 	}

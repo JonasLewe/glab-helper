@@ -27,18 +27,9 @@ func NewPicker() *Picker {
 }
 
 func (picker *Picker) Choose(ctx context.Context, choices []string, options Options) (string, bool, error) {
-	if len(choices) == 0 {
-		return "", false, nil
-	}
-	known := make(map[string]struct{}, len(choices))
-	for _, choice := range choices {
-		if strings.ContainsAny(choice, "\r\n") {
-			return "", false, fmt.Errorf("selection choice contains a line break")
-		}
-		if _, exists := known[choice]; exists {
-			return "", false, fmt.Errorf("duplicate selection choice %q", choice)
-		}
-		known[choice] = struct{}{}
+	known, err := validateChoices(choices)
+	if err != nil || len(choices) == 0 {
+		return "", false, err
 	}
 
 	input := strings.Join(choices, "\n") + "\n"
@@ -64,6 +55,65 @@ func (picker *Picker) Choose(ctx context.Context, choices []string, options Opti
 		return "", false, fmt.Errorf("fzf returned an unknown selection %q", selected)
 	}
 	return selected, true, nil
+}
+
+func (picker *Picker) ChooseMany(ctx context.Context, choices []string, options Options) ([]string, bool, error) {
+	known, err := validateChoices(choices)
+	if err != nil || len(choices) == 0 {
+		return nil, false, err
+	}
+
+	input := strings.Join(choices, "\n") + "\n"
+	output, err := picker.output(
+		ctx,
+		input,
+		"--multi",
+		"--prompt=  "+options.Prompt+" > ",
+		"--header=  TAB=select  ENTER=confirm  ESC=cancel",
+		"--height=~40",
+		"--reverse",
+		"--border=rounded",
+		"--border-label= "+options.BorderLabel+" ",
+	)
+	if errors.Is(err, errCancelled) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	value := strings.TrimSuffix(string(output), "\n")
+	value = strings.TrimSuffix(value, "\r")
+	if value == "" {
+		return []string{}, true, nil
+	}
+	selected := strings.Split(value, "\n")
+	seen := make(map[string]struct{}, len(selected))
+	for index, choice := range selected {
+		choice = strings.TrimSuffix(choice, "\r")
+		selected[index] = choice
+		if _, exists := known[choice]; !exists {
+			return nil, false, fmt.Errorf("fzf returned an unknown selection %q", choice)
+		}
+		if _, exists := seen[choice]; exists {
+			return nil, false, fmt.Errorf("fzf returned duplicate selection %q", choice)
+		}
+		seen[choice] = struct{}{}
+	}
+	return selected, true, nil
+}
+
+func validateChoices(choices []string) (map[string]struct{}, error) {
+	known := make(map[string]struct{}, len(choices))
+	for _, choice := range choices {
+		if strings.ContainsAny(choice, "\r\n") {
+			return nil, fmt.Errorf("selection choice contains a line break")
+		}
+		if _, exists := known[choice]; exists {
+			return nil, fmt.Errorf("duplicate selection choice %q", choice)
+		}
+		known[choice] = struct{}{}
+	}
+	return known, nil
 }
 
 func runFZF(ctx context.Context, input string, args ...string) ([]byte, error) {

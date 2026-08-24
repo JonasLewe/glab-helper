@@ -61,8 +61,12 @@ type workItemQueryJSON struct {
 }
 
 func (client *Client) CreateLabel(ctx context.Context, projectID int64, name string) (Label, error) {
+	return client.CreateLabelWithColor(ctx, projectID, name, defaultSyncLabelColor)
+}
+
+func (client *Client) CreateLabelWithColor(ctx context.Context, projectID int64, name, color string) (Label, error) {
 	endpoint := fmt.Sprintf("projects/%d/labels", projectID)
-	output, err := client.output(ctx, "api", endpoint, "-X", "POST", "-f", "name="+name, "-f", "color="+defaultSyncLabelColor)
+	output, err := client.output(ctx, "api", endpoint, "-X", "POST", "-f", "name="+name, "-f", "color="+color)
 	if err != nil {
 		return Label{}, fmt.Errorf("create GitLab label %q: %w", name, err)
 	}
@@ -111,6 +115,26 @@ func (client *Client) CreateMilestone(ctx context.Context, projectID int64, titl
 	return milestone, nil
 }
 
+func (client *Client) CreateManualMilestone(ctx context.Context, projectID int64, title, dueDate string) (Milestone, error) {
+	endpoint := fmt.Sprintf("projects/%d/milestones", projectID)
+	args := []string{"api", endpoint, "-X", "POST", "-f", "title=" + title}
+	if dueDate != "" {
+		args = append(args, "-f", "due_date="+dueDate)
+	}
+	output, err := client.output(ctx, args...)
+	if err != nil {
+		return Milestone{}, fmt.Errorf("create GitLab milestone %q: %w", title, err)
+	}
+	milestone, err := parseMilestone(output)
+	if err != nil {
+		return Milestone{}, fmt.Errorf("decode created GitLab milestone %q: %w", title, err)
+	}
+	if milestone.Title != title {
+		return Milestone{}, fmt.Errorf("created GitLab milestone has unexpected title %q", milestone.Title)
+	}
+	return milestone, nil
+}
+
 func (client *Client) UpdateMilestone(ctx context.Context, projectID, milestoneID int64, title, description string, close bool) error {
 	endpoint := fmt.Sprintf("projects/%d/milestones/%d", projectID, milestoneID)
 	args := []string{"api", endpoint, "-X", "PUT", "-f", "title=" + title, "-f", "description=" + description}
@@ -124,6 +148,23 @@ func (client *Client) UpdateMilestone(ctx context.Context, projectID, milestoneI
 }
 
 func (client *Client) CreateIssue(ctx context.Context, projectID int64, title, description string, labels []string, milestoneID *int64, close bool) (CreatedIssue, error) {
+	created, err := client.createIssue(ctx, projectID, title, description, labels, milestoneID, nil)
+	if err != nil {
+		return CreatedIssue{}, err
+	}
+	if close {
+		if err := client.UpdateIssue(ctx, projectID, created.IID, title, description, labels, milestoneID, true); err != nil {
+			return CreatedIssue{}, err
+		}
+	}
+	return created, nil
+}
+
+func (client *Client) CreateManualIssue(ctx context.Context, projectID int64, title, description string, labels []string, milestoneID, assigneeID *int64) (CreatedIssue, error) {
+	return client.createIssue(ctx, projectID, title, description, labels, milestoneID, assigneeID)
+}
+
+func (client *Client) createIssue(ctx context.Context, projectID int64, title, description string, labels []string, milestoneID, assigneeID *int64) (CreatedIssue, error) {
 	endpoint := fmt.Sprintf("projects/%d/issues", projectID)
 	args := []string{
 		"api", endpoint, "-X", "POST",
@@ -135,6 +176,9 @@ func (client *Client) CreateIssue(ctx context.Context, projectID int64, title, d
 	if milestoneID != nil {
 		args = append(args, "-f", "milestone_id="+strconv.FormatInt(*milestoneID, 10))
 	}
+	if assigneeID != nil {
+		args = append(args, "-f", "assignee_id="+strconv.FormatInt(*assigneeID, 10))
+	}
 	output, err := client.output(ctx, args...)
 	if err != nil {
 		return CreatedIssue{}, fmt.Errorf("create GitLab issue %q: %w", title, err)
@@ -142,11 +186,6 @@ func (client *Client) CreateIssue(ctx context.Context, projectID int64, title, d
 	created, err := parseCreatedIssue(output)
 	if err != nil {
 		return CreatedIssue{}, fmt.Errorf("decode created GitLab issue %q: %w", title, err)
-	}
-	if close {
-		if err := client.UpdateIssue(ctx, projectID, created.IID, title, description, labels, milestoneID, true); err != nil {
-			return CreatedIssue{}, err
-		}
 	}
 	return created, nil
 }

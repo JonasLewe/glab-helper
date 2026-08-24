@@ -59,3 +59,36 @@ func TestChooseReturnsOnlyAListedChoice(t *testing.T) {
 		t.Fatal("fzf failure was ignored")
 	}
 }
+
+func TestChooseManyReturnsOnlyUniqueListedChoices(t *testing.T) {
+	var arguments []string
+	picker := &Picker{output: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		arguments = append([]string(nil), args...)
+		return []byte("first\nthird\n"), nil
+	}}
+
+	selected, found, err := picker.ChooseMany(context.Background(), []string{"first", "second", "third"}, Options{Prompt: "Labels", BorderLabel: "labels"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || !reflect.DeepEqual(selected, []string{"first", "third"}) {
+		t.Fatalf("selection = %#v, %t", selected, found)
+	}
+	if len(arguments) == 0 || arguments[0] != "--multi" {
+		t.Fatalf("fzf arguments = %q", arguments)
+	}
+
+	picker.output = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("first\nfirst\n"), nil
+	}
+	if _, _, err := picker.ChooseMany(context.Background(), []string{"first"}, Options{}); err == nil {
+		t.Fatal("duplicate fzf output was accepted")
+	}
+
+	picker.output = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errCancelled
+	}
+	if _, found, err := picker.ChooseMany(context.Background(), []string{"first"}, Options{}); err != nil || found {
+		t.Fatalf("cancelled selection = found %t, error %v", found, err)
+	}
+}
