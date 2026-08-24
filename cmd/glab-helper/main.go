@@ -21,6 +21,7 @@ import (
 
 const version = "0.1.0"
 const usage = "Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version]"
+const terminalClearSequence = "\x1b[H\x1b[2J\x1b[3J"
 
 const (
 	actionSync = "Sync YouTrack"
@@ -87,6 +88,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, help)
 		return 0
 	}
+	clearScreen(stdout)
 
 	ctx := context.Background()
 	client := gitlab.NewClient()
@@ -206,6 +208,25 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	fmt.Fprintf(stderr, "Interactive workflow for %s is not migrated yet; read %d GitLab issues, %d tasks, %d milestones, %d labels, and %d remote branches without changes; read %d YouTrack work items into memory.\n", project.Path, len(issues), len(tasks), len(milestones), len(labels), len(branches), len(sourceSnapshot.WorkItems))
 	return 2
+}
+
+func clearScreen(output io.Writer) {
+	file, ok := output.(*os.File)
+	if !ok {
+		return
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return
+	}
+	writeTerminalClear(output, info.Mode()&os.ModeCharDevice != 0, os.Getenv("TERM"))
+}
+
+func writeTerminalClear(output io.Writer, interactive bool, term string) {
+	if !interactive || strings.TrimSpace(term) == "" || strings.EqualFold(strings.TrimSpace(term), "dumb") {
+		return
+	}
+	fmt.Fprint(output, terminalClearSequence)
 }
 
 func runSynchronization(

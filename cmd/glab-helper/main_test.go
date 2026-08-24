@@ -40,6 +40,30 @@ func TestOfflineCLI(t *testing.T) {
 	}
 }
 
+func TestWriteTerminalClear(t *testing.T) {
+	tests := []struct {
+		name        string
+		interactive bool
+		term        string
+		want        string
+	}{
+		{name: "interactive terminal", interactive: true, term: "xterm-256color", want: terminalClearSequence},
+		{name: "redirected output", term: "xterm-256color"},
+		{name: "missing terminal type", interactive: true},
+		{name: "dumb terminal", interactive: true, term: "dumb"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			writeTerminalClear(&output, test.interactive, test.term)
+			if output.String() != test.want {
+				t.Fatalf("output = %q, want %q", output.String(), test.want)
+			}
+		})
+	}
+}
+
 func TestOnlineCLIReadsProjectData(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	commandLog := filepath.Join(temporaryDirectory, "commands")
