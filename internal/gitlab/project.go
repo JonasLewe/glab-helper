@@ -12,10 +12,6 @@ type Project struct {
 	DefaultBranch string
 }
 
-func CurrentProject(ctx context.Context) (Project, error) {
-	return NewClient().CurrentProject(ctx)
-}
-
 func (client *Client) CurrentProject(ctx context.Context) (Project, error) {
 	output, err := client.output(ctx, "repo", "view", "--output", "json")
 	if err != nil {

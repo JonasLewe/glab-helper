@@ -134,7 +134,7 @@ func Build(snapshot source.Snapshot, config projectconfig.Config, current Curren
 		if !found {
 			continue
 		}
-		identity := candidate.target.String() + ":" + candidate.id
+		identity := string(candidate.target) + ":" + candidate.id
 		if previous, exists := matched[identity]; exists {
 			return Plan{}, fmt.Errorf("GitLab %s %s matches both YouTrack %q and %q", candidate.target, candidate.reference(), previous, desiredItem.SourceID)
 		}
@@ -535,10 +535,6 @@ func sortedUnique(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
-}
-
-func (target Target) String() string {
-	return string(target)
 }
 
 func (item existingItem) reference() string {

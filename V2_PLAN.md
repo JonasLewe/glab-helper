@@ -50,6 +50,10 @@ the stable Zsh release until the final cutover.
 - [x] 16a — Match the v1 interactive terminal UX with its project header,
   connection feedback, menu symbols, prompts, and optional color highlights;
   keep a no-error plain-text fallback and developer-only work-item actions.
+- [x] 17.01 — Audit the complete Go v2 implementation before cutover. Remove
+  dead code, accidental complexity, duplication, and unnecessary abstraction;
+  keep behavior covered while making the code as small, explicit, and
+  maintainable as practical under professional Go standards.
 - [ ] 17 — Switch installation to Go and remove Zsh-only runtime dependencies.
 
 Before step 17, tag the final Zsh release. Merge `v2` into `main` only when the

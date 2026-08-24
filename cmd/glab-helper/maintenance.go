@@ -82,7 +82,7 @@ func runMaintenanceReset(ctx context.Context, client *gitlab.Client, project git
 	}
 
 	deletedIssues, failedIssues := 0, 0
-	for _, issue := range canonicalResetPlan(plan).Issues {
+	for _, issue := range plan.Issues {
 		if err := client.DeleteIssue(ctx, project.ID, issue.IID); err != nil {
 			failedIssues++
 			fmt.Fprintf(stderr, "Failed to delete issue #%d: %v\n", issue.IID, err)
@@ -96,7 +96,7 @@ func runMaintenanceReset(ctx context.Context, client *gitlab.Client, project git
 	}
 
 	deletedMilestones, failedMilestones := 0, 0
-	for _, milestone := range canonicalResetPlan(plan).Milestones {
+	for _, milestone := range plan.Milestones {
 		if err := client.DeleteMilestone(ctx, project.ID, milestone.ID); err != nil {
 			failedMilestones++
 			fmt.Fprintf(stderr, "Failed to delete milestone %d: %v\n", milestone.ID, err)
@@ -129,11 +129,11 @@ func readResetPlan(ctx context.Context, client *gitlab.Client, projectID int64) 
 func writeResetPreview(output io.Writer, projectPath string, plan resetPlan) {
 	fmt.Fprintf(output, "Full project reset preview for %s\n", projectPath)
 	fmt.Fprintf(output, "%d issues will be permanently deleted:\n", len(plan.Issues))
-	for _, issue := range canonicalResetPlan(plan).Issues {
+	for _, issue := range plan.Issues {
 		fmt.Fprintf(output, "  DELETE issue #%d [%s] %s\n", issue.IID, issue.State, issue.Title)
 	}
 	fmt.Fprintf(output, "%d milestones will be permanently deleted:\n", len(plan.Milestones))
-	for _, milestone := range canonicalResetPlan(plan).Milestones {
+	for _, milestone := range plan.Milestones {
 		fmt.Fprintf(output, "  DELETE milestone %d [%s] %s\n", milestone.ID, milestone.State, milestone.Title)
 	}
 	fmt.Fprintln(output, "Branches, labels, and merge requests will be preserved.")

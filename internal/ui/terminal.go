@@ -35,7 +35,7 @@ func DetectTerminal(output io.Writer) Terminal {
 		return Terminal{}
 	}
 	_, noColorSet := os.LookupEnv("NO_COLOR")
-	return NewTerminal(
+	return newTerminal(
 		info.Mode()&os.ModeCharDevice != 0,
 		os.Getenv("TERM"),
 		noColorSet,
@@ -43,7 +43,7 @@ func DetectTerminal(output io.Writer) Terminal {
 	)
 }
 
-func NewTerminal(interactive bool, term string, noColorSet bool, cliColor string) Terminal {
+func newTerminal(interactive bool, term string, noColorSet bool, cliColor string) Terminal {
 	term = strings.TrimSpace(term)
 	ansi := interactive && term != "" && !strings.EqualFold(term, "dumb")
 	color := ansi && !noColorSet && strings.TrimSpace(cliColor) != "0"

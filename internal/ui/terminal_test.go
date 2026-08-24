@@ -17,7 +17,7 @@ func TestTerminalPresentationFallsBackWithoutColor(t *testing.T) {
 	}{
 		{
 			name:        "color terminal",
-			terminal:    NewTerminal(true, "xterm-256color", false, ""),
+			terminal:    newTerminal(true, "xterm-256color", false, ""),
 			wantClear:   true,
 			wantHeader:  true,
 			wantColor:   true,
@@ -25,26 +25,26 @@ func TestTerminalPresentationFallsBackWithoutColor(t *testing.T) {
 		},
 		{
 			name:        "NO_COLOR",
-			terminal:    NewTerminal(true, "xterm-256color", true, ""),
+			terminal:    newTerminal(true, "xterm-256color", true, ""),
 			wantClear:   true,
 			wantHeader:  true,
 			wantControl: true,
 		},
 		{
 			name:        "CLICOLOR disabled",
-			terminal:    NewTerminal(true, "xterm-256color", false, "0"),
+			terminal:    newTerminal(true, "xterm-256color", false, "0"),
 			wantClear:   true,
 			wantHeader:  true,
 			wantControl: true,
 		},
 		{
 			name:       "dumb terminal",
-			terminal:   NewTerminal(true, "dumb", false, ""),
+			terminal:   newTerminal(true, "dumb", false, ""),
 			wantHeader: true,
 		},
 		{
 			name:     "redirected output",
-			terminal: NewTerminal(false, "xterm-256color", false, ""),
+			terminal: newTerminal(false, "xterm-256color", false, ""),
 		},
 	}
 
