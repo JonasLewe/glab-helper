@@ -245,17 +245,31 @@ func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, err
 	}
 	role, found := project.RoleForKind(item.Kind)
 	if !found {
-		return source.WorkItem{}, fmt.Errorf("custom field %q value %q is not assigned to a configured hierarchy role", project.YouTrack.Fields.Kind, item.Kind)
+		return source.WorkItem{}, fmt.Errorf("YouTrack issue %q custom field %q value %q is not assigned to a configured hierarchy role", item.ID, project.YouTrack.Fields.Kind, item.Kind)
 	}
 	item.Role = role
 
 	if !bytes.Equal(value.Parent, []byte("null")) {
 		var parent parentJSON
 		if err := json.Unmarshal(value.Parent, &parent); err != nil {
-			return source.WorkItem{}, fmt.Errorf("field %q: %w", "parent", err)
+			return source.WorkItem{}, fmt.Errorf("YouTrack issue %q field %q: %w", item.ID, "parent", err)
 		}
-		if parent.Issues == nil || len(*parent.Issues) != 1 || (*parent.Issues)[0].IDReadable == nil || strings.TrimSpace(*(*parent.Issues)[0].IDReadable) == "" {
-			return source.WorkItem{}, fmt.Errorf("field %q must contain exactly one valid issue", "parent")
+		if parent.Issues == nil {
+			return source.WorkItem{}, fmt.Errorf("YouTrack issue %q (%s) field %q must contain exactly one valid issue; the issues collection is missing", item.ID, item.Kind, "parent")
+		}
+		if len(*parent.Issues) != 1 {
+			parentIDs := make([]string, 0, len(*parent.Issues))
+			for _, parentIssue := range *parent.Issues {
+				if parentIssue.IDReadable == nil || strings.TrimSpace(*parentIssue.IDReadable) == "" {
+					parentIDs = append(parentIDs, "<invalid>")
+					continue
+				}
+				parentIDs = append(parentIDs, *parentIssue.IDReadable)
+			}
+			return source.WorkItem{}, fmt.Errorf("YouTrack issue %q (%s) field %q must contain exactly one valid issue; got %d: %s", item.ID, item.Kind, "parent", len(*parent.Issues), strings.Join(parentIDs, ", "))
+		}
+		if (*parent.Issues)[0].IDReadable == nil || strings.TrimSpace(*(*parent.Issues)[0].IDReadable) == "" {
+			return source.WorkItem{}, fmt.Errorf("YouTrack issue %q (%s) field %q contains an invalid issue ID", item.ID, item.Kind, "parent")
 		}
 		item.ParentID = *(*parent.Issues)[0].IDReadable
 	}

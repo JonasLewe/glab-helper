@@ -188,6 +188,14 @@ printf '%s\n' "$selected"
 			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n" + workItemReadCommands,
 		},
 		{
+			name:                "dry-run diagnoses unavailable YouTrack config",
+			args:                []string{"--dry-run"},
+			youTrackUnavailable: true,
+			code:                1,
+			wantOutput:          "cannot read required YouTrack configuration variable YOUTRACK_URL",
+			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n",
+		},
+		{
 			name:                "maintenance requires YouTrack config",
 			args:                []string{"--maintenance"},
 			youTrackUnavailable: true,

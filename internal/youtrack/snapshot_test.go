@@ -131,6 +131,37 @@ func TestParseIssueRejectsIncompleteResponse(t *testing.T) {
 	}
 }
 
+func TestParseIssueHierarchyErrorsIdentifyTheSourceIssue(t *testing.T) {
+	project := testProjectConfig()
+	project.YouTrack.Hierarchy = project.YouTrack.Hierarchy[:2]
+
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{
+			name: "unknown type",
+			data: `{"idReadable":"APP-9","summary":"Unexpected","description":null,"resolved":null,"tags":[],"customFields":[{"name":"Type","value":{"name":"User Story"}}],"parent":null}`,
+			want: `YouTrack issue "APP-9" custom field "Type" value "User Story"`,
+		},
+		{
+			name: "multiple parents",
+			data: `{"idReadable":"APP-10","summary":"Ambiguous","description":null,"resolved":null,"tags":[],"customFields":[{"name":"Type","value":{"name":"Feature"}}],"parent":{"issues":[{"idReadable":"APP-1"},{"idReadable":"APP-2"}]}}`,
+			want: `YouTrack issue "APP-10" (Feature) field "parent" must contain exactly one valid issue; got 2: APP-1, APP-2`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseIssue([]byte(test.data), project)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestReadSnapshotRejectsBrokenConfiguredHierarchy(t *testing.T) {
 	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
 		return testHTTPResponse(http.StatusOK, `[{"id":"2-3","idReadable":"APP-3","summary":"Orphan","description":null,"resolved":null,"tags":[],"customFields":[{"name":"Type","value":{"name":"User Story"}}],"parent":null}]`), nil

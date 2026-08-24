@@ -104,16 +104,25 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	projectConfigAvailable := projectConfigErr == nil
 	youTrackConfig := youtrack.Config{}
 	youTrackAvailable := false
+	var youTrackConfigErr error
 	if projectConfigAvailable {
-		youTrackConfig, err = youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
-		youTrackAvailable = err == nil
+		youTrackConfig, youTrackConfigErr = youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
+		youTrackAvailable = youTrackConfigErr == nil
 	}
 	if maintenance && !youTrackAvailable {
-		fmt.Fprintln(stderr, "Maintenance mode requires the configured YouTrack target project.")
+		if !projectConfigAvailable {
+			fmt.Fprintf(stderr, "Maintenance mode requires the project configuration: %v\n", projectConfigErr)
+		} else {
+			fmt.Fprintf(stderr, "Maintenance mode requires the configured YouTrack target project: %v\n", youTrackConfigErr)
+		}
 		return 1
 	}
 	if dryRun && !youTrackAvailable {
-		fmt.Fprintln(stderr, "YouTrack synchronization preview requires a valid project configuration and YouTrack access.")
+		if !projectConfigAvailable {
+			fmt.Fprintf(stderr, "YouTrack synchronization preview requires the project configuration: %v\n", projectConfigErr)
+		} else {
+			fmt.Fprintf(stderr, "Cannot load the YouTrack configuration for synchronization preview: %v\n", youTrackConfigErr)
+		}
 		return 1
 	}
 	if dryRun {
