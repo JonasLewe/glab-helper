@@ -1,109 +1,97 @@
-#!/usr/bin/env bash
-# ==============================================================================
-# glab-helper installer — macOS & Arch Linux
-# ==============================================================================
-#
-# Usage:
-#   git clone <repo> ~/glab-helper
-#   cd ~/glab-helper
-#   ./install.sh
-#
-# What it does:
-#   1. Installs runtime dependencies (zsh, glab, fzf, jq, curl) via brew/pacman
-#   2. Symlinks src/glab-helper → ~/.local/bin/glab-helper
+#!/bin/sh
 
-set -e
+set -eu
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OS="$(uname)"
-BIN_DIR="$HOME/.local/bin"
+: "${HOME:?HOME must be set}"
 
-echo "=== Installing glab-helper ==="
-echo
+repo_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+install_dir=${GLAB_HELPER_INSTALL_DIR:-"$HOME/.local/bin"}
+staging=
 
-# ─── Ensure ~/.local/bin exists and is on PATH ───
-mkdir -p "$BIN_DIR"
+cleanup() {
+    if [ -n "$staging" ]; then
+        rm -f "$staging"
+    fi
+}
+trap cleanup 0 HUP INT TERM
 
-if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    echo "$BIN_DIR is not in your PATH."
-    echo "   Add this to your shell config:"
-    echo "     export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo
-fi
+printf '%s\n\n' '=== Installing glab-helper ==='
 
-# ─── Install runtime dependencies ───
-deps=(zsh glab fzf jq curl)
-missing=()
+mkdir -p "$install_dir"
+install_dir=$(CDPATH= cd "$install_dir" && pwd)
+target="$install_dir/glab-helper"
 
-for cmd in "${deps[@]}"; do
-    if ! command -v "$cmd" &>/dev/null; then
-        missing+=("$cmd")
+case ":${PATH:-}:" in
+    *":$install_dir:"*) ;;
+    *)
+        printf '%s\n' "$install_dir is not in PATH."
+        printf '%s\n\n' 'Add export PATH="$HOME/.local/bin:$PATH" to your shell configuration.'
+        ;;
+esac
+
+set --
+for dependency in go glab fzf; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+        set -- "$@" "$dependency"
     fi
 done
 
-if [[ ${#missing[@]} -eq 0 ]]; then
-    echo "All dependencies installed (${deps[*]})"
-else
-    echo "Installing missing dependencies: ${missing[*]}"
+if [ "$#" -gt 0 ]; then
+    printf 'Installing missing dependencies:'
+    printf ' %s' "$@"
+    printf '\n'
 
-    if [[ "$OS" == "Darwin" ]]; then
-        if ! command -v brew &>/dev/null; then
-            echo "Homebrew not found. Install it first: https://brew.sh"
+    case "$(uname -s)" in
+        Darwin)
+            if ! command -v brew >/dev/null 2>&1; then
+                printf '%s\n' 'Homebrew is required to install missing dependencies: https://brew.sh' >&2
+                exit 1
+            fi
+            brew install "$@"
+            ;;
+        Linux)
+            if ! command -v pacman >/dev/null 2>&1; then
+                printf '%s\n' 'No supported package manager found. Install Go, glab, and fzf manually.' >&2
+                exit 1
+            fi
+            if [ "$(id -u)" -eq 0 ]; then
+                pacman -S --needed "$@"
+            elif command -v sudo >/dev/null 2>&1; then
+                sudo pacman -S --needed "$@"
+            else
+                printf '%s\n' 'sudo is required to install missing packages with pacman.' >&2
+                exit 1
+            fi
+            ;;
+        *)
+            printf '%s\n' 'Unsupported operating system. Install Go, glab, and fzf manually.' >&2
             exit 1
-        fi
-        brew install "${missing[@]}"
-    elif [[ "$OS" == "Linux" ]]; then
-        if command -v pacman &>/dev/null; then
-            sudo pacman -S --noconfirm "${missing[@]}"
-        else
-            echo "No supported package manager found (brew/pacman)."
-            echo "   Please install manually: ${missing[*]}"
-            echo "   See: https://gitlab.com/gitlab-org/cli#installation"
-            exit 1
-        fi
-    fi
+            ;;
+    esac
 fi
 
-echo
+for dependency in go glab fzf; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+        printf 'Required command is still unavailable: %s\n' "$dependency" >&2
+        exit 1
+    fi
+done
 
-if ! command -v zsh &>/dev/null; then
-    echo "zsh is required to run glab-helper, but it is still not available."
-    echo "   Please install zsh manually and re-run ./install.sh"
+staging=$(mktemp "$install_dir/.glab-helper.XXXXXX")
+(
+    cd "$repo_dir"
+    go build -trimpath -o "$staging" ./cmd/glab-helper
+)
+chmod 0755 "$staging"
+
+if ! installed_version=$("$staging" --version); then
+    printf '%s\n' 'The built glab-helper binary failed its version check.' >&2
     exit 1
 fi
 
-# ─── Symlink glab-helper to ~/.local/bin ───
-src="$REPO_DIR/src/glab-helper"
-dst="$BIN_DIR/glab-helper"
+mv -f "$staging" "$target"
+staging=
+trap - 0 HUP INT TERM
 
-if [[ ! -f "$src" ]]; then
-    echo "Source script not found: $src"
-    exit 1
-fi
-
-chmod +x "$src"
-
-if [[ -e "$dst" ]] || [[ -L "$dst" ]]; then
-    if [[ "$(readlink "$dst" 2>/dev/null)" == "$src" ]]; then
-        echo "glab-helper already linked"
-    else
-        read -p "$dst already exists. Overwrite? (y/n) " -r || REPLY="n"
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -f "$dst"
-            ln -s "$src" "$dst"
-            echo "glab-helper → $src"
-        else
-            echo "Skipping"
-        fi
-    fi
-else
-    ln -s "$src" "$dst"
-    echo "glab-helper → $src"
-fi
-
-echo
-echo "Installation complete!"
-echo "   Runtime shell: $(command -v zsh)"
-echo "   Run 'glab-helper' from any GitLab repo to get started."
-echo
+printf '\nInstalled %s at %s\n' "$installed_version" "$target"
+printf '%s\n' "Run glab-helper from a cloned GitLab repository."

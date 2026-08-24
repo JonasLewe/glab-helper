@@ -23,7 +23,7 @@ func TestOfflineCLI(t *testing.T) {
 		want string
 	}{
 		{name: "help", args: []string{"--dev", "--dry-run", "--help"}, want: "Usage: glab-helper"},
-		{name: "version", args: []string{"--dry-run", "--version"}, want: "glab-helper 0.1.0"},
+		{name: "version", args: []string{"--dry-run", "--version"}, want: "glab-helper 0.2.0"},
 		{name: "conflicting modes", args: []string{"--dev", "--maintenance", "--help"}, code: 2, want: "cannot be combined"},
 		{name: "unknown argument", args: []string{"--version", "--unknown"}, code: 2, want: "Unknown argument"},
 	}

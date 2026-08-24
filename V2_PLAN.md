@@ -54,7 +54,8 @@ the stable Zsh release until the final cutover.
   dead code, accidental complexity, duplication, and unnecessary abstraction;
   keep behavior covered while making the code as small, explicit, and
   maintainable as practical under professional Go standards.
-- [ ] 17 — Switch installation to Go and remove Zsh-only runtime dependencies.
+- [x] 17 — Switch installation to Go and remove Zsh-only runtime dependencies.
 
-Before step 17, tag the final Zsh release. Merge `v2` into `main` only when the
-Go binary covers the current supported workflows and the installer selects it.
+The final Zsh release is preserved by the `v0.1.0-zsh-final` tag. Merge `v2`
+into `main` only when the Go binary covers the current supported workflows and
+the installer selects it.

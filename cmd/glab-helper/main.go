@@ -17,7 +17,7 @@ import (
 	"github.com/JonasLewe/glab-helper/internal/youtrack"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 const usage = "Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version]"
 
 const (
@@ -39,7 +39,7 @@ const help = `
     --dry-run   Read-only mode; preview YouTrack syncs without any writes
     --version   Show version and exit
 
-  Run from any cloned GitLab repo. Requires: glab, fzf, jq
+  Run from any cloned GitLab repo. Requires: glab, fzf
   Authenticate first: glab auth login
 
 `
