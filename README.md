@@ -125,6 +125,12 @@ and merge requests are always preserved. YouTrack work items are not read or
 modified by maintenance mode; YouTrack remains the source of truth for the
 subsequent clean synchronization.
 
+Interactive Go sessions clear the terminal and show a compact glab-helper
+header with the current GitLab project. Supported terminals also receive
+subtle color accents in the header and `fzf` selectors. Redirected output and
+terminals without ANSI support stay plain; set `NO_COLOR` or `CLICOLOR=0` to
+disable colors explicitly.
+
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by
 `GLAB_HELPER_YOUTRACK_PROJECT_PATH`:

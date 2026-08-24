@@ -22,7 +22,6 @@ import (
 
 const version = "0.1.0"
 const usage = "Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version]"
-const terminalClearSequence = "\x1b[H\x1b[2J\x1b[3J"
 
 const (
 	actionSync = "Sync YouTrack"
@@ -94,7 +93,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, help)
 		return 0
 	}
-	clearScreen(stdout)
+	terminal := ui.DetectTerminal(stdout)
+	terminal.Clear(stdout)
 
 	ctx := context.Background()
 	client := gitlab.NewClient()
@@ -103,6 +103,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Cannot detect the current GitLab project: %v\n", err)
 		return 1
 	}
+	terminal.WriteHeader(stdout, project.Path)
 	projectConfigPath := os.Getenv("GLAB_HELPER_CONFIG")
 	projectConfig, projectConfigErr := projectconfig.Load(projectConfigPath)
 	if projectConfigErr != nil && (!errors.Is(projectConfigErr, projectconfig.ErrNotFound) || projectConfigPath != "") {
@@ -125,7 +126,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	picker := ui.NewPicker()
+	picker := ui.NewPicker(terminal.ColorEnabled())
 	if maintenance {
 		action := actionResetProject
 		if dryRun {
@@ -213,25 +214,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stderr, "Cannot match the selected action.")
 	return 2
-}
-
-func clearScreen(output io.Writer) {
-	file, ok := output.(*os.File)
-	if !ok {
-		return
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return
-	}
-	writeTerminalClear(output, info.Mode()&os.ModeCharDevice != 0, os.Getenv("TERM"))
-}
-
-func writeTerminalClear(output io.Writer, interactive bool, term string) {
-	if !interactive || strings.TrimSpace(term) == "" || strings.EqualFold(strings.TrimSpace(term), "dumb") {
-		return
-	}
-	fmt.Fprint(output, terminalClearSequence)
 }
 
 func runSynchronization(

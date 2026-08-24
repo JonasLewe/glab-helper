@@ -14,7 +14,8 @@ var errCancelled = errors.New("selection cancelled")
 type commandOutput func(context.Context, string, ...string) ([]byte, error)
 
 type Picker struct {
-	output commandOutput
+	output       commandOutput
+	colorEnabled bool
 }
 
 type Options struct {
@@ -22,8 +23,8 @@ type Options struct {
 	BorderLabel string
 }
 
-func NewPicker() *Picker {
-	return &Picker{output: runFZF}
+func NewPicker(colorEnabled bool) *Picker {
+	return &Picker{output: runFZF, colorEnabled: colorEnabled}
 }
 
 func (picker *Picker) Choose(ctx context.Context, choices []string, options Options) (string, bool, error) {
@@ -33,16 +34,16 @@ func (picker *Picker) Choose(ctx context.Context, choices []string, options Opti
 	}
 
 	input := strings.Join(choices, "\n") + "\n"
-	output, err := picker.output(
-		ctx,
-		input,
-		"--prompt=  "+options.Prompt+" > ",
+	arguments := []string{
+		"--prompt=  " + options.Prompt + " > ",
 		"--header=  ENTER=select  ESC=cancel",
 		"--height=~40",
 		"--reverse",
 		"--border=rounded",
-		"--border-label= "+options.BorderLabel+" ",
-	)
+		"--border-label= " + options.BorderLabel + " ",
+	}
+	arguments = picker.withOptionalColor(arguments)
+	output, err := picker.output(ctx, input, arguments...)
 	if errors.Is(err, errCancelled) {
 		return "", false, nil
 	}
@@ -64,17 +65,17 @@ func (picker *Picker) ChooseMany(ctx context.Context, choices []string, options 
 	}
 
 	input := strings.Join(choices, "\n") + "\n"
-	output, err := picker.output(
-		ctx,
-		input,
+	arguments := []string{
 		"--multi",
-		"--prompt=  "+options.Prompt+" > ",
+		"--prompt=  " + options.Prompt + " > ",
 		"--header=  TAB=select  ENTER=confirm  ESC=cancel",
 		"--height=~40",
 		"--reverse",
 		"--border=rounded",
-		"--border-label= "+options.BorderLabel+" ",
-	)
+		"--border-label= " + options.BorderLabel + " ",
+	}
+	arguments = picker.withOptionalColor(arguments)
+	output, err := picker.output(ctx, input, arguments...)
 	if errors.Is(err, errCancelled) {
 		return nil, false, nil
 	}
@@ -100,6 +101,13 @@ func (picker *Picker) ChooseMany(ctx context.Context, choices []string, options 
 		seen[choice] = struct{}{}
 	}
 	return selected, true, nil
+}
+
+func (picker *Picker) withOptionalColor(arguments []string) []string {
+	if !picker.colorEnabled {
+		return arguments
+	}
+	return append(arguments, "--color=border:cyan,header:-1:dim,prompt:cyan,pointer:cyan,marker:cyan")
 }
 
 func validateChoices(choices []string) (map[string]struct{}, error) {

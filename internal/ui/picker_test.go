@@ -92,3 +92,20 @@ func TestChooseManyReturnsOnlyUniqueListedChoices(t *testing.T) {
 		t.Fatalf("cancelled selection = found %t, error %v", found, err)
 	}
 }
+
+func TestPickerAddsColorOnlyWhenEnabled(t *testing.T) {
+	var arguments []string
+	picker := NewPicker(true)
+	picker.output = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		arguments = append([]string(nil), args...)
+		return []byte("first\n"), nil
+	}
+
+	if _, _, err := picker.Choose(context.Background(), []string{"first"}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	want := "--color=border:cyan,header:-1:dim,prompt:cyan,pointer:cyan,marker:cyan"
+	if len(arguments) == 0 || arguments[len(arguments)-1] != want {
+		t.Fatalf("fzf arguments = %q, want final argument %q", arguments, want)
+	}
+}

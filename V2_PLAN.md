@@ -47,7 +47,7 @@ the stable Zsh release until the final cutover.
 - [x] 14 — Migrate the remaining issue-edit actions.
 - [x] 15 — Migrate the remaining developer actions.
 - [x] 16 — Migrate maintenance reset last because it is destructive.
-- [ ] 16a — Polish the interactive terminal UX: show a compact glab-helper
+- [x] 16a — Polish the interactive terminal UX: show a compact glab-helper
   startup logo after clearing the screen and add optional color highlights only
   when the terminal supports them, with a no-error plain-text fallback.
 - [ ] 17 — Switch installation to Go and remove Zsh-only runtime dependencies.
