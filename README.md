@@ -51,9 +51,9 @@ binary reads every issue selected by the configured YouTrack query through pagin
 requests into an in-memory, provider-neutral snapshot. YouTrack is never
 written. Missing YouTrack access remains optional except in maintenance and
 synchronization-preview modes. The normal Go menu can synchronize YouTrack,
-select an existing GitLab issue or task, manage its branch, or exit. The
-remaining editing and developer actions still use the Jira-based Zsh
-implementation.
+select an existing GitLab issue or task, manage its branch, edit an issue, or
+exit. The remaining developer and maintenance actions still use the
+Jira-based Zsh implementation.
 
 `--dry-run` now builds and prints the combined YouTrack synchronization plan.
 The preview includes labels, milestones, issues, tasks, their configured
@@ -81,6 +81,14 @@ the repository's default branch is placed first in the base selector. Checkout
 remains optional. This workflow changes only local Git refs and the working
 tree; it never writes GitLab or YouTrack and does not push a created branch.
 `--dry-run` returns before fetching or reading branches.
+
+For a selected GitLab issue, the Go action menu can also edit the description,
+toggle project labels, assign one project member or unassign everyone, set or
+remove a milestone, and close the issue after an explicit confirmation. The
+menu returns after each edit so several fields can be changed in one session.
+Descriptions open in `VISUAL`, then `EDITOR`, with `nvim`, `vim`, or `vi` as
+fallbacks. A selected GitLab task exposes only branch management until the
+task-editing API is migrated separately.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by

@@ -44,9 +44,12 @@ the stable Zsh release until the final cutover.
 - [x] 12 — List and select an existing issue or task without mutations.
 - [x] 13 — Migrate branch pruning, creation, and checkout for issues and tasks.
 - [x] 13a — Provision missing issue-board lists from synchronized status labels.
-- [ ] 14 — Migrate the remaining issue-edit actions.
+- [x] 14 — Migrate the remaining issue-edit actions.
 - [ ] 15 — Migrate the remaining developer actions.
 - [ ] 16 — Migrate maintenance reset last because it is destructive.
+- [ ] 16a — Polish the interactive terminal UX: show a compact glab-helper
+  startup logo after clearing the screen and add optional color highlights only
+  when the terminal supports them, with a no-error plain-text fallback.
 - [ ] 17 — Switch installation to Go and remove Zsh-only runtime dependencies.
 
 Before step 17, tag the final Zsh release. Merge `v2` into `main` only when the

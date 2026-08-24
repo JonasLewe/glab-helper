@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	gitrepo "github.com/JonasLewe/glab-helper/internal/git"
@@ -28,8 +29,13 @@ const (
 	actionWork = "Work on existing issue or task"
 	actionExit = "Exit"
 
-	workActionBranch = "Branch (checkout / create)"
-	workActionDone   = "Done"
+	workActionBranch      = "Branch (checkout / create)"
+	workActionDescription = "Edit description"
+	workActionLabels      = "Edit labels"
+	workActionAssignee    = "Edit assignee"
+	workActionMilestone   = "Edit milestone"
+	workActionClose       = "Close issue"
+	workActionDone        = "Done"
 )
 
 var readYouTrackSnapshot = youtrack.ReadSnapshot
@@ -169,7 +175,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stderr, "Cannot read current local and remote branches for %s: %v\n", project.Path, err)
 				return 1
 			}
-			return selectWorkItem(ctx, picker, gitClient, issues, tasks, branches, project.DefaultBranch, stdin, stdout, stderr)
+			return selectWorkItem(ctx, picker, client, gitClient, project.ID, issues, tasks, branches, project.DefaultBranch, stdin, stdout, stderr)
 		case actionExit:
 			fmt.Fprintln(stdout, "Done.")
 			return 0
@@ -309,7 +315,9 @@ func runSynchronization(
 func selectWorkItem(
 	ctx context.Context,
 	picker *ui.Picker,
+	gitLabClient *gitlab.Client,
 	gitClient *gitrepo.Client,
+	projectID int64,
 	issues []gitlab.Issue,
 	tasks []gitlab.Task,
 	branches []gitrepo.Branch,
@@ -317,6 +325,7 @@ func selectWorkItem(
 	stdin io.Reader,
 	stdout, stderr io.Writer,
 ) int {
+	input := bufio.NewReader(stdin)
 	candidates := workitem.OpenCandidates(issues, tasks, branches)
 	if len(candidates) == 0 {
 		fmt.Fprintln(stdout, "No open GitLab issues or tasks found.")
@@ -347,19 +356,274 @@ func selectWorkItem(
 		if candidate.Branch.Name != "" {
 			fmt.Fprintf(stdout, "Existing branch: %s\n", candidate.Branch.Name)
 		}
-		workAction, selected, err := picker.Choose(ctx, []string{workActionBranch, workActionDone}, ui.Options{Prompt: "Work item action", BorderLabel: fmt.Sprintf("%s #%d", candidate.Kind, candidate.IID)})
-		if err != nil {
-			fmt.Fprintf(stderr, "Cannot select a work item action: %v\n", err)
-			return 1
+		var issue *gitlab.Issue
+		if candidate.Kind == workitem.Issue {
+			for issueIndex := range issues {
+				if issues[issueIndex].IID == candidate.IID {
+					issue = &issues[issueIndex]
+					break
+				}
+			}
+			if issue == nil {
+				fmt.Fprintf(stderr, "Cannot find the selected GitLab issue #%d in the complete issue snapshot.\n", candidate.IID)
+				return 1
+			}
 		}
-		if !selected || workAction == workActionDone {
-			fmt.Fprintln(stdout, "Done. No changes were applied.")
-			return 0
+
+		for {
+			actions := []string{workActionBranch}
+			if issue != nil {
+				actions = append(actions, workActionDescription, workActionLabels, workActionAssignee, workActionMilestone, workActionClose)
+			}
+			actions = append(actions, workActionDone)
+			workAction, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Work item action", BorderLabel: fmt.Sprintf("%s #%d", candidate.Kind, candidate.IID)})
+			if err != nil {
+				fmt.Fprintf(stderr, "Cannot select a work item action: %v\n", err)
+				return 1
+			}
+			if !selected || workAction == workActionDone {
+				fmt.Fprintln(stdout, "Done.")
+				return 0
+			}
+
+			switch workAction {
+			case workActionBranch:
+				return manageWorkItemBranch(ctx, picker, gitClient, candidate, branches, defaultBranch, input, stdout, stderr)
+			case workActionDescription:
+				err = editIssueDescription(ctx, gitLabClient, projectID, issue, stdin, stdout, stderr)
+			case workActionLabels:
+				err = editIssueLabels(ctx, picker, gitLabClient, projectID, issue, stdout)
+			case workActionAssignee:
+				err = editIssueAssignee(ctx, picker, gitLabClient, projectID, issue, stdout)
+			case workActionMilestone:
+				err = editIssueMilestone(ctx, picker, gitLabClient, projectID, issue, stdout)
+			case workActionClose:
+				closed, closeErr := closeIssue(ctx, gitLabClient, projectID, issue, input, stdout)
+				err = closeErr
+				if err == nil && closed {
+					return 0
+				}
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "Cannot apply the selected issue action: %v\n", err)
+				return 1
+			}
 		}
-		return manageWorkItemBranch(ctx, picker, gitClient, candidate, branches, defaultBranch, bufio.NewReader(stdin), stdout, stderr)
 	}
 	fmt.Fprintln(stderr, "Cannot match the selected GitLab issue or task.")
 	return 1
+}
+
+func editIssueDescription(
+	ctx context.Context,
+	client *gitlab.Client,
+	projectID int64,
+	issue *gitlab.Issue,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+) error {
+	fmt.Fprintln(stdout, "Opening the current issue description in your editor...")
+	description, err := ui.EditText(ctx, issue.Description, stdin, stdout, stderr)
+	if err != nil {
+		return fmt.Errorf("edit GitLab issue #%d description: %w", issue.IID, err)
+	}
+	if description == issue.Description {
+		fmt.Fprintln(stdout, "Description unchanged.")
+		return nil
+	}
+	if err := client.UpdateIssueDescription(ctx, projectID, issue.IID, description); err != nil {
+		return err
+	}
+	issue.Description = description
+	fmt.Fprintf(stdout, "Updated description for issue #%d.\n", issue.IID)
+	return nil
+}
+
+func editIssueLabels(ctx context.Context, picker *ui.Picker, client *gitlab.Client, projectID int64, issue *gitlab.Issue, stdout io.Writer) error {
+	labels, err := client.ListLabels(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("read GitLab labels: %w", err)
+	}
+	sort.SliceStable(labels, func(left, right int) bool {
+		return strings.ToLower(labels[left].Name) < strings.ToLower(labels[right].Name)
+	})
+	current := make(map[string]struct{}, len(issue.Labels))
+	for _, label := range issue.Labels {
+		current[label] = struct{}{}
+	}
+	choices := make([]string, 0, len(labels))
+	labelByChoice := make(map[string]string, len(labels))
+	for _, label := range labels {
+		action := "Add label: "
+		if _, exists := current[label.Name]; exists {
+			action = "Remove label: "
+		}
+		choice := action + label.Name
+		choices = append(choices, choice)
+		labelByChoice[choice] = label.Name
+	}
+	if len(choices) == 0 {
+		fmt.Fprintln(stdout, "No GitLab labels are available.")
+		return nil
+	}
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Label", BorderLabel: fmt.Sprintf("issue #%d labels", issue.IID)})
+	if err != nil {
+		return fmt.Errorf("select a GitLab issue label: %w", err)
+	}
+	if !selected {
+		fmt.Fprintln(stdout, "Labels unchanged.")
+		return nil
+	}
+	labelName := labelByChoice[choice]
+	updated := append([]string(nil), issue.Labels...)
+	if _, exists := current[labelName]; exists {
+		updated = removeString(updated, labelName)
+	} else {
+		updated = append(updated, labelName)
+	}
+	sort.Strings(updated)
+	if err := client.SetIssueLabels(ctx, projectID, issue.IID, updated); err != nil {
+		return err
+	}
+	issue.Labels = updated
+	fmt.Fprintf(stdout, "Updated labels for issue #%d: %s\n", issue.IID, listOrNone(updated))
+	return nil
+}
+
+func editIssueAssignee(ctx context.Context, picker *ui.Picker, client *gitlab.Client, projectID int64, issue *gitlab.Issue, stdout io.Writer) error {
+	members, err := client.ListMembers(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("read GitLab project members: %w", err)
+	}
+	sort.SliceStable(members, func(left, right int) bool {
+		return strings.ToLower(members[left].Username) < strings.ToLower(members[right].Username)
+	})
+	choices := []string{"Unassign"}
+	memberByChoice := make(map[string]gitlab.Member, len(members))
+	for _, member := range members {
+		choice := member.Username
+		if strings.TrimSpace(member.Name) != "" {
+			choice += " (" + member.Name + ")"
+		}
+		choices = append(choices, choice)
+		memberByChoice[choice] = member
+	}
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Assignee", BorderLabel: fmt.Sprintf("issue #%d assignee", issue.IID)})
+	if err != nil {
+		return fmt.Errorf("select a GitLab issue assignee: %w", err)
+	}
+	if !selected {
+		fmt.Fprintln(stdout, "Assignee unchanged.")
+		return nil
+	}
+	if choice == "Unassign" {
+		if len(issue.Assignees) == 0 {
+			fmt.Fprintln(stdout, "Issue is already unassigned.")
+			return nil
+		}
+		if err := client.SetIssueAssignee(ctx, projectID, issue.IID, nil); err != nil {
+			return err
+		}
+		issue.Assignees = nil
+		fmt.Fprintf(stdout, "Unassigned issue #%d.\n", issue.IID)
+		return nil
+	}
+	member := memberByChoice[choice]
+	if len(issue.Assignees) == 1 && issue.Assignees[0] == member.Username {
+		fmt.Fprintf(stdout, "Issue #%d is already assigned to %s.\n", issue.IID, member.Username)
+		return nil
+	}
+	if err := client.SetIssueAssignee(ctx, projectID, issue.IID, &member.ID); err != nil {
+		return err
+	}
+	issue.Assignees = []string{member.Username}
+	fmt.Fprintf(stdout, "Assigned issue #%d to %s.\n", issue.IID, member.Username)
+	return nil
+}
+
+func editIssueMilestone(ctx context.Context, picker *ui.Picker, client *gitlab.Client, projectID int64, issue *gitlab.Issue, stdout io.Writer) error {
+	milestones, err := client.ListMilestones(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("read GitLab milestones: %w", err)
+	}
+	sort.SliceStable(milestones, func(left, right int) bool {
+		if strings.EqualFold(milestones[left].Title, milestones[right].Title) {
+			return milestones[left].ID < milestones[right].ID
+		}
+		return strings.ToLower(milestones[left].Title) < strings.ToLower(milestones[right].Title)
+	})
+	choices := []string{"Remove milestone"}
+	milestoneByChoice := make(map[string]gitlab.Milestone, len(milestones))
+	for _, milestone := range milestones {
+		choice := fmt.Sprintf("%s [milestone %d]", milestone.Title, milestone.ID)
+		choices = append(choices, choice)
+		milestoneByChoice[choice] = milestone
+	}
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Milestone", BorderLabel: fmt.Sprintf("issue #%d milestone", issue.IID)})
+	if err != nil {
+		return fmt.Errorf("select a GitLab issue milestone: %w", err)
+	}
+	if !selected {
+		fmt.Fprintln(stdout, "Milestone unchanged.")
+		return nil
+	}
+	if choice == "Remove milestone" {
+		if issue.Milestone == nil {
+			fmt.Fprintln(stdout, "Issue already has no milestone.")
+			return nil
+		}
+		if err := client.SetIssueMilestone(ctx, projectID, issue.IID, nil); err != nil {
+			return err
+		}
+		issue.Milestone = nil
+		fmt.Fprintf(stdout, "Removed the milestone from issue #%d.\n", issue.IID)
+		return nil
+	}
+	milestone := milestoneByChoice[choice]
+	if issue.Milestone != nil && issue.Milestone.Title == milestone.Title {
+		fmt.Fprintf(stdout, "Issue #%d already uses milestone %s.\n", issue.IID, milestone.Title)
+		return nil
+	}
+	if err := client.SetIssueMilestone(ctx, projectID, issue.IID, &milestone.ID); err != nil {
+		return err
+	}
+	issue.Milestone = &gitlab.IssueMilestone{Title: milestone.Title}
+	fmt.Fprintf(stdout, "Set issue #%d milestone to %s.\n", issue.IID, milestone.Title)
+	return nil
+}
+
+func closeIssue(ctx context.Context, client *gitlab.Client, projectID int64, issue *gitlab.Issue, stdin *bufio.Reader, stdout io.Writer) (bool, error) {
+	confirmed, err := readConfirmation(stdin, stdout, fmt.Sprintf("Close issue #%d? [y/N] ", issue.IID))
+	if err != nil {
+		return false, fmt.Errorf("read close confirmation: %w", err)
+	}
+	if !confirmed {
+		fmt.Fprintln(stdout, "Issue close cancelled.")
+		return false, nil
+	}
+	if err := client.CloseIssue(ctx, projectID, issue.IID); err != nil {
+		return false, err
+	}
+	issue.State = "closed"
+	fmt.Fprintf(stdout, "Closed issue #%d.\n", issue.IID)
+	return true, nil
+}
+
+func removeString(values []string, target string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if value != target {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func listOrNone(values []string) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	return strings.Join(values, ", ")
 }
 
 func manageWorkItemBranch(

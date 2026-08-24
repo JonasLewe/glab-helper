@@ -399,3 +399,137 @@ esac
 		t.Fatalf("git commands = %q, want %q", commands, wantCommands)
 	}
 }
+
+func TestIssueEditWorkflowLoopsThroughActions(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	t.Chdir(temporaryDirectory)
+	commandLog := filepath.Join(temporaryDirectory, "commands")
+	fzfState := filepath.Join(temporaryDirectory, "fzf-state")
+	glabPath := filepath.Join(temporaryDirectory, "glab")
+	gitPath := filepath.Join(temporaryDirectory, "git")
+	fzfPath := filepath.Join(temporaryDirectory, "fzf")
+	editorPath := filepath.Join(temporaryDirectory, "editor")
+
+	glabStub := `#!/bin/sh
+printf '%s\n' "$*" >>"$COMMAND_LOG"
+if [ "$1 $2" = "api graphql" ]; then
+  printf '%s\n' '{"data":{"namespace":{"workItems":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+  exit 0
+fi
+case "$*" in
+  "repo view --output json")
+    printf '%s\n' '{"id":42,"path_with_namespace":"group/project","default_branch":"main"}'
+    ;;
+  "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100")
+    printf '%s\n' '[{"iid":7,"title":"Implement parser","description":"Old details","labels":["backend"],"milestone":{"title":"Release"},"state":"opened","assignees":[{"username":"alex"}]}]'
+    ;;
+  "api --paginate projects/42/labels?per_page=100")
+    printf '%s\n' '[{"id":3,"name":"backend"},{"id":4,"name":"team-a"}]'
+    ;;
+  "api --paginate projects/42/members/all?per_page=100")
+    printf '%s\n' '[{"id":5,"username":"alex","name":"Alex Example"},{"id":6,"username":"sam","name":"Sam Example"}]'
+    ;;
+  "api --paginate projects/42/milestones?per_page=100")
+    printf '%s\n' '[{"id":8,"title":"Release","description":null,"state":"active"},{"id":9,"title":"Next","description":null,"state":"active"}]'
+    ;;
+  "api projects/42/issues/7 -X PUT"*)
+    printf '%s\n' '{}'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	gitStub := `#!/bin/sh
+case "$*" in
+  "fetch --prune origin --quiet")
+    ;;
+  "for-each-ref --sort=-committerdate --format=%(refname)%00%(symref) refs/heads/ refs/remotes/origin/")
+    printf 'refs/heads/main\0\nrefs/remotes/origin/main\0\nrefs/remotes/origin/HEAD\0refs/remotes/origin/main\n'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	fzfStub := `#!/bin/sh
+case "$*" in
+  *"Action >"*)
+    printf '%s\n' 'Work on existing issue or task'
+    ;;
+  *"Issue or task >"*)
+    IFS= read -r selected
+    printf '%s\n' "$selected"
+    ;;
+  *"Work item action >"*)
+    step=0
+    if [ -f "$FZF_STATE" ]; then step=$(cat "$FZF_STATE"); fi
+    step=$((step + 1))
+    printf '%s\n' "$step" >"$FZF_STATE"
+    case "$step" in
+      1) printf '%s\n' 'Edit description' ;;
+      2) printf '%s\n' 'Edit labels' ;;
+      3) printf '%s\n' 'Edit assignee' ;;
+      4) printf '%s\n' 'Edit milestone' ;;
+      5) printf '%s\n' 'Close issue' ;;
+      *) exit 99 ;;
+    esac
+    ;;
+  *"Label >"*)
+    printf '%s\n' 'Add label: team-a'
+    ;;
+  *"Assignee >"*)
+    printf '%s\n' 'sam (Sam Example)'
+    ;;
+  *"Milestone >"*)
+    printf '%s\n' 'Next [milestone 9]'
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+`
+	editorStub := "#!/bin/sh\nprintf '%s' 'New details' >\"$1\"\n"
+	for path, content := range map[string]string{glabPath: glabStub, gitPath: gitStub, fzfPath: fzfStub, editorPath: editorStub} {
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("COMMAND_LOG", commandLog)
+	t.Setenv("FZF_STATE", fzfState)
+	t.Setenv("VISUAL", editorPath)
+	t.Setenv("EDITOR", "")
+	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, strings.NewReader("y\n"), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d; stdout: %s; stderr: %s", code, stdout.String(), stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"Updated description for issue #7",
+		"Updated labels for issue #7: backend, team-a",
+		"Assigned issue #7 to sam",
+		"Set issue #7 milestone to Next",
+		"Closed issue #7",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output %q does not contain %q", output, want)
+		}
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"api projects/42/issues/7 -X PUT -f description=New details",
+		"api projects/42/issues/7 -X PUT -f labels=backend,team-a",
+		"api projects/42/issues/7 -X PUT -f assignee_id=6",
+		"api projects/42/issues/7 -X PUT -f milestone_id=9",
+		"api projects/42/issues/7 -X PUT -f state_event=close",
+	} {
+		if !strings.Contains(string(commands), want+"\n") {
+			t.Fatalf("commands %q do not contain %q", commands, want)
+		}
+	}
+}

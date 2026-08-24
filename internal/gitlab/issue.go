@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 type Issue struct {
@@ -51,6 +53,46 @@ func (client *Client) ListIssues(ctx context.Context, projectID int64) ([]Issue,
 		return nil, fmt.Errorf("decode paginated GitLab issues: %w", err)
 	}
 	return issues, nil
+}
+
+func (client *Client) UpdateIssueDescription(ctx context.Context, projectID, issueIID int64, description string) error {
+	return client.updateIssueFields(ctx, projectID, issueIID, "description", "description="+description)
+}
+
+func (client *Client) SetIssueLabels(ctx context.Context, projectID, issueIID int64, labels []string) error {
+	return client.updateIssueFields(ctx, projectID, issueIID, "labels", "labels="+strings.Join(labels, ","))
+}
+
+func (client *Client) SetIssueAssignee(ctx context.Context, projectID, issueIID int64, memberID *int64) error {
+	value := int64(0)
+	if memberID != nil {
+		value = *memberID
+	}
+	return client.updateIssueFields(ctx, projectID, issueIID, "assignee", "assignee_id="+strconv.FormatInt(value, 10))
+}
+
+func (client *Client) SetIssueMilestone(ctx context.Context, projectID, issueIID int64, milestoneID *int64) error {
+	value := int64(0)
+	if milestoneID != nil {
+		value = *milestoneID
+	}
+	return client.updateIssueFields(ctx, projectID, issueIID, "milestone", "milestone_id="+strconv.FormatInt(value, 10))
+}
+
+func (client *Client) CloseIssue(ctx context.Context, projectID, issueIID int64) error {
+	return client.updateIssueFields(ctx, projectID, issueIID, "state", "state_event=close")
+}
+
+func (client *Client) updateIssueFields(ctx context.Context, projectID, issueIID int64, operation string, fields ...string) error {
+	endpoint := fmt.Sprintf("projects/%d/issues/%d", projectID, issueIID)
+	args := []string{"api", endpoint, "-X", "PUT"}
+	for _, field := range fields {
+		args = append(args, "-f", field)
+	}
+	if _, err := client.output(ctx, args...); err != nil {
+		return fmt.Errorf("update GitLab issue #%d %s: %w", issueIID, operation, err)
+	}
+	return nil
 }
 
 func parseIssuePages(data []byte) ([]Issue, error) {
