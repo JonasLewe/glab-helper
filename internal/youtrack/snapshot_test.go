@@ -131,6 +131,18 @@ func TestParseIssueRejectsIncompleteResponse(t *testing.T) {
 	}
 }
 
+func TestParseIssueAcceptsEmptyParentIssueCollectionForRoot(t *testing.T) {
+	data := []byte(`{"idReadable":"APP-1","summary":"Root","description":null,"resolved":null,"tags":[],"customFields":[{"name":"Type","value":{"name":"Epic"}}],"parent":{"issues":[]}}`)
+
+	item, err := parseIssue(data, testProjectConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ID != "APP-1" || item.Role != "epic" || item.ParentID != "" {
+		t.Fatalf("item = %#v, want root Epic without parent", item)
+	}
+}
+
 func TestParseIssueHierarchyErrorsIdentifyTheSourceIssue(t *testing.T) {
 	project := testProjectConfig()
 	project.YouTrack.Hierarchy = project.YouTrack.Hierarchy[:2]
@@ -164,7 +176,7 @@ func TestParseIssueHierarchyErrorsIdentifyTheSourceIssue(t *testing.T) {
 
 func TestReadSnapshotRejectsBrokenConfiguredHierarchy(t *testing.T) {
 	client := httpDoerFunc(func(*http.Request) (*http.Response, error) {
-		return testHTTPResponse(http.StatusOK, `[{"id":"2-3","idReadable":"APP-3","summary":"Orphan","description":null,"resolved":null,"tags":[],"customFields":[{"name":"Type","value":{"name":"User Story"}}],"parent":null}]`), nil
+		return testHTTPResponse(http.StatusOK, `[{"id":"2-3","idReadable":"APP-3","summary":"Orphan","description":null,"resolved":null,"tags":[],"customFields":[{"name":"Type","value":{"name":"User Story"}}],"parent":{"issues":[]}}]`), nil
 	})
 	connection := Config{URL: "https://youtrack.example.com", token: "secret-token"}
 

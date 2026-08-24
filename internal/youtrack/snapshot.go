@@ -257,7 +257,7 @@ func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, err
 		if parent.Issues == nil {
 			return source.WorkItem{}, fmt.Errorf("YouTrack issue %q (%s) field %q must contain exactly one valid issue; the issues collection is missing", item.ID, item.Kind, "parent")
 		}
-		if len(*parent.Issues) != 1 {
+		if len(*parent.Issues) > 1 {
 			parentIDs := make([]string, 0, len(*parent.Issues))
 			for _, parentIssue := range *parent.Issues {
 				if parentIssue.IDReadable == nil || strings.TrimSpace(*parentIssue.IDReadable) == "" {
@@ -267,6 +267,9 @@ func parseIssue(data []byte, project projectconfig.Config) (source.WorkItem, err
 				parentIDs = append(parentIDs, *parentIssue.IDReadable)
 			}
 			return source.WorkItem{}, fmt.Errorf("YouTrack issue %q (%s) field %q must contain exactly one valid issue; got %d: %s", item.ID, item.Kind, "parent", len(*parent.Issues), strings.Join(parentIDs, ", "))
+		}
+		if len(*parent.Issues) == 0 {
+			return item, nil
 		}
 		if (*parent.Issues)[0].IDReadable == nil || strings.TrimSpace(*(*parent.Issues)[0].IDReadable) == "" {
 			return source.WorkItem{}, fmt.Errorf("YouTrack issue %q (%s) field %q contains an invalid issue ID", item.ID, item.Kind, "parent")
