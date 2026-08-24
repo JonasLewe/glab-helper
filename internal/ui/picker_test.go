@@ -101,11 +101,24 @@ func TestPickerAddsColorOnlyWhenEnabled(t *testing.T) {
 		return []byte("first\n"), nil
 	}
 
-	if _, _, err := picker.Choose(context.Background(), []string{"first"}, Options{}); err != nil {
+	options := Options{Header: "ENTER=select", Accent: Magenta}
+	if _, _, err := picker.Choose(context.Background(), []string{"first"}, options); err != nil {
 		t.Fatal(err)
 	}
-	want := "--color=border:cyan,header:-1:dim,prompt:cyan,pointer:cyan,marker:cyan"
+	want := "--color=border:magenta,header:-1:dim,prompt:magenta,pointer:magenta,marker:magenta"
 	if len(arguments) == 0 || arguments[len(arguments)-1] != want {
 		t.Fatalf("fzf arguments = %q, want final argument %q", arguments, want)
 	}
+	if !contains(arguments, "--header=  ENTER=select") {
+		t.Fatalf("fzf arguments = %q, want custom header", arguments)
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

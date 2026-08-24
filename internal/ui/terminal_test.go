@@ -57,7 +57,7 @@ func TestTerminalPresentationFallsBackWithoutColor(t *testing.T) {
 			if got := strings.Contains(value, terminalClearSequence); got != test.wantClear {
 				t.Fatalf("clear sequence present = %t, want %t; output %q", got, test.wantClear, value)
 			}
-			if got := strings.Contains(value, "glab-helper"); got != test.wantHeader {
+			if got := strings.Contains(value, "GitLab Helper"); got != test.wantHeader {
 				t.Fatalf("header present = %t, want %t; output %q", got, test.wantHeader, value)
 			}
 			if got := test.terminal.ColorEnabled(); got != test.wantColor {
@@ -71,6 +71,9 @@ func TestTerminalPresentationFallsBackWithoutColor(t *testing.T) {
 			}
 			if test.wantHeader && !strings.Contains(value, "group/project") {
 				t.Fatalf("project context missing from output %q", value)
+			}
+			if test.wantHeader && (!strings.Contains(value, "╔") || !strings.Contains(value, "╚")) {
+				t.Fatalf("v1-style header box missing from output %q", value)
 			}
 		})
 	}

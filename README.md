@@ -50,10 +50,11 @@ issues are read separately through the paginated work-item GraphQL API. The
 binary reads every issue selected by the configured YouTrack query through paginated `GET`
 requests into an in-memory, provider-neutral snapshot. YouTrack is never
 written. Missing YouTrack access remains optional except in maintenance and
-synchronization-preview modes. The normal Go menu can synchronize YouTrack,
-select an existing GitLab issue or task, manage its branch, edit an issue, or
-exit. Developer actions and the guarded maintenance reset are also migrated;
-the installer still selects the Jira-based Zsh implementation until the final
+synchronization-preview modes. The normal Go menu intentionally contains only
+the complete YouTrack sync and Exit. Selecting an existing GitLab issue or
+task, managing its branch, and editing an issue are developer actions exposed
+only through `--dev`. The guarded maintenance reset is also migrated; the
+installer still selects the Jira-based Zsh implementation until the final
 cutover.
 
 `--dry-run` now builds and prints the combined YouTrack synchronization plan.
@@ -71,7 +72,7 @@ If one action fails, execution stops immediately, reports how many preceding
 actions completed, and asks for a fresh `--dry-run` before retrying. The plan is
 idempotent, so successfully completed actions are recognized on that retry.
 
-The `Work on existing issue or task` action first runs
+The developer-only `Work on existing issue` action first runs
 `git fetch --prune origin`, then lists all open GitLab issues and tasks in one
 `fzf` selector.
 Tasks show their parent issue, and an item is annotated when a current local or
@@ -125,11 +126,12 @@ and merge requests are always preserved. YouTrack work items are not read or
 modified by maintenance mode; YouTrack remains the source of truth for the
 subsequent clean synchronization.
 
-Interactive Go sessions clear the terminal and show a compact glab-helper
-header with the current GitLab project. Supported terminals also receive
-subtle color accents in the header and `fzf` selectors. Redirected output and
-terminals without ANSI support stay plain; set `NO_COLOR` or `CLICOLOR=0` to
-disable colors explicitly.
+Interactive Go sessions follow the v1 terminal layout: they clear the screen,
+show connection and YouTrack-integration feedback, render the current GitLab
+project in the cyan header box, and use the familiar symbols and prompt in the
+main selector. Supported terminals also receive subtle color accents.
+Redirected output and terminals without ANSI support stay plain; set
+`NO_COLOR` or `CLICOLOR=0` to disable colors explicitly.
 
 The Go version reads these CI/CD variables from the current GitLab project, or
 from the URL-encoded project selected by

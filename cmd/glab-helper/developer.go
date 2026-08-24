@@ -26,7 +26,7 @@ const (
 	actionSyncAll           = "Sync all YouTrack work items"
 	actionPreviewMilestones = "Preview YouTrack milestones only"
 	actionPreviewAll        = "Preview all YouTrack work items"
-	actionCreateIssue       = "Create GitLab issue"
+	actionCreateIssue       = "Create issue"
 	actionExportSnapshot    = "Export GitLab snapshot"
 
 	createIssueFromYouTrack = "From YouTrack"
@@ -89,7 +89,7 @@ func createIssueWorkflow(
 	stdout, stderr io.Writer,
 ) int {
 	if youTrackAvailable {
-		mode, selected, err := picker.Choose(ctx, []string{createIssueFromYouTrack, createIssueManually}, ui.Options{Prompt: "Create issue", BorderLabel: "create GitLab issue"})
+		mode, selected, err := picker.Choose(ctx, []string{createIssueFromYouTrack, createIssueManually}, ui.Options{Prompt: "Create issue", BorderLabel: "create GitLab issue", Accent: ui.Magenta})
 		if err != nil {
 			fmt.Fprintf(stderr, "Cannot select an issue creation mode: %v\n", err)
 			return 1
@@ -145,7 +145,7 @@ func createIssueFromSource(
 		return 0
 	}
 	sort.Strings(choices)
-	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "YouTrack issue", BorderLabel: "unsynchronized YouTrack issues"})
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "YouTrack issue", BorderLabel: "unsynchronized YouTrack issues", Accent: ui.Magenta})
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot select an unsynchronized YouTrack issue: %v\n", err)
 		return 1
@@ -312,7 +312,7 @@ func createManualIssue(ctx context.Context, picker *ui.Picker, client *gitlab.Cl
 			labelChoices = append(labelChoices, choice)
 			labelByChoice[choice] = name
 		}
-		selectedLabels, selected, err := picker.ChooseMany(ctx, labelChoices, ui.Options{Prompt: "Labels", BorderLabel: "issue labels"})
+		selectedLabels, selected, err := picker.ChooseMany(ctx, labelChoices, ui.Options{Prompt: "Labels", BorderLabel: "issue labels", Accent: ui.Magenta})
 		if err != nil {
 			fmt.Fprintf(stderr, "Cannot select issue labels: %v\n", err)
 			return 1
@@ -388,7 +388,7 @@ func createManualIssue(ctx context.Context, picker *ui.Picker, client *gitlab.Cl
 		memberChoices = append(memberChoices, choice)
 		membersByChoice[choice] = member
 	}
-	memberChoice, selected, err := picker.Choose(ctx, memberChoices, ui.Options{Prompt: "Assignee", BorderLabel: "issue assignee"})
+	memberChoice, selected, err := picker.Choose(ctx, memberChoices, ui.Options{Prompt: "Assignee", BorderLabel: "issue assignee", Accent: ui.Magenta})
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot select an issue assignee: %v\n", err)
 		return 1
@@ -418,7 +418,7 @@ func createManualIssue(ctx context.Context, picker *ui.Picker, client *gitlab.Cl
 		milestoneChoices = append(milestoneChoices, choice)
 		milestonesByChoice[choice] = milestone
 	}
-	milestoneChoice, selected, err := picker.Choose(ctx, milestoneChoices, ui.Options{Prompt: "Milestone", BorderLabel: "issue milestone"})
+	milestoneChoice, selected, err := picker.Choose(ctx, milestoneChoices, ui.Options{Prompt: "Milestone", BorderLabel: "issue milestone", Accent: ui.Magenta})
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot select an issue milestone: %v\n", err)
 		return 1

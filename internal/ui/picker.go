@@ -21,7 +21,16 @@ type Picker struct {
 type Options struct {
 	Prompt      string
 	BorderLabel string
+	Header      string
+	Accent      Accent
 }
+
+type Accent string
+
+const (
+	Cyan    Accent = "cyan"
+	Magenta Accent = "magenta"
+)
 
 func NewPicker(colorEnabled bool) *Picker {
 	return &Picker{output: runFZF, colorEnabled: colorEnabled}
@@ -34,15 +43,19 @@ func (picker *Picker) Choose(ctx context.Context, choices []string, options Opti
 	}
 
 	input := strings.Join(choices, "\n") + "\n"
+	header := options.Header
+	if header == "" {
+		header = "ENTER=select  ESC=cancel"
+	}
 	arguments := []string{
 		"--prompt=  " + options.Prompt + " > ",
-		"--header=  ENTER=select  ESC=cancel",
+		"--header=  " + header,
 		"--height=~40",
 		"--reverse",
 		"--border=rounded",
 		"--border-label= " + options.BorderLabel + " ",
 	}
-	arguments = picker.withOptionalColor(arguments)
+	arguments = picker.withOptionalColor(arguments, options.Accent)
 	output, err := picker.output(ctx, input, arguments...)
 	if errors.Is(err, errCancelled) {
 		return "", false, nil
@@ -65,16 +78,20 @@ func (picker *Picker) ChooseMany(ctx context.Context, choices []string, options 
 	}
 
 	input := strings.Join(choices, "\n") + "\n"
+	header := options.Header
+	if header == "" {
+		header = "TAB=select  ENTER=confirm  ESC=cancel"
+	}
 	arguments := []string{
 		"--multi",
 		"--prompt=  " + options.Prompt + " > ",
-		"--header=  TAB=select  ENTER=confirm  ESC=cancel",
+		"--header=  " + header,
 		"--height=~40",
 		"--reverse",
 		"--border=rounded",
 		"--border-label= " + options.BorderLabel + " ",
 	}
-	arguments = picker.withOptionalColor(arguments)
+	arguments = picker.withOptionalColor(arguments, options.Accent)
 	output, err := picker.output(ctx, input, arguments...)
 	if errors.Is(err, errCancelled) {
 		return nil, false, nil
@@ -103,11 +120,14 @@ func (picker *Picker) ChooseMany(ctx context.Context, choices []string, options 
 	return selected, true, nil
 }
 
-func (picker *Picker) withOptionalColor(arguments []string) []string {
+func (picker *Picker) withOptionalColor(arguments []string, accent Accent) []string {
 	if !picker.colorEnabled {
 		return arguments
 	}
-	return append(arguments, "--color=border:cyan,header:-1:dim,prompt:cyan,pointer:cyan,marker:cyan")
+	if accent != Magenta {
+		accent = Cyan
+	}
+	return append(arguments, fmt.Sprintf("--color=border:%s,header:-1:dim,prompt:%s,pointer:%s,marker:%s", accent, accent, accent, accent))
 }
 
 func validateChoices(choices []string) (map[string]struct{}, error) {

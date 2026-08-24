@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,6 +38,30 @@ func TestOfflineCLI(t *testing.T) {
 				t.Fatalf("output %q does not contain %q", output, test.want)
 			}
 		})
+	}
+}
+
+func TestWorkOnExistingIssueIsDeveloperOnly(t *testing.T) {
+	normal := availableMainActions(false, true, true)
+	if want := []string{actionSync, actionExit}; !slices.Equal(normal, want) {
+		t.Fatalf("normal actions = %q, want %q", normal, want)
+	}
+	developer := availableMainActions(true, true, true)
+	if !slices.Contains(developer, actionWork) {
+		t.Fatalf("developer actions = %q, want %q", developer, actionWork)
+	}
+	if slices.Contains(normal, actionWork) {
+		t.Fatalf("normal actions unexpectedly contain %q", actionWork)
+	}
+	for action, want := range map[string]string{
+		actionSync:        "~ Sync YouTrack",
+		actionWork:        "▸ Work on existing issue",
+		actionCreateIssue: "+ Create issue",
+		actionExit:        "× Exit",
+	} {
+		if got := mainActionDisplay(action); got != want {
+			t.Fatalf("display for %q = %q, want %q", action, got, want)
+		}
 	}
 }
 
@@ -142,7 +167,6 @@ printf '%s\n' "$selected"
 	t.Setenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH", "")
 
 	const gitLabSnapshotCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\napi --paginate projects/42/milestones?per_page=100\napi --paginate projects/42/labels?per_page=100\napi --paginate projects/42/boards?per_page=100\n"
-	const workItemReadCommands = "api --paginate projects/42/issues?state=all&issue_type=issue&per_page=100\napi graphql tasks\nfetch --prune origin --quiet\nfor-each-ref --sort=-committerdate --format=%(refname)%00%(symref) refs/heads/ refs/remotes/origin/\n"
 	tests := []struct {
 		name                 string
 		args                 []string
@@ -194,8 +218,8 @@ printf '%s\n' "$selected"
 			name:                "YouTrack config optional",
 			youTrackUnavailable: true,
 			code:                0,
-			wantOutput:          "Selected issue #7",
-			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n" + workItemReadCommands,
+			wantOutput:          "Done.",
+			wantCommandSuffix:   "api projects/group%2Fproject/variables/YOUTRACK_URL\n",
 		},
 		{
 			name:                "dry-run diagnoses unavailable YouTrack config",
@@ -335,14 +359,14 @@ esac
 `
 	fzfStub := `#!/bin/sh
 case "$*" in
-  *"Action >"*)
-    printf '%s\n' 'Work on existing issue or task'
+  *"What do you want to do? >"*)
+    printf '%s\n' '▸ Work on existing issue'
     ;;
   *"Issue or task >"*)
     IFS= read -r selected
     printf '%s\n' "$selected"
     ;;
-  *"Work item action >"*)
+  *"Action >"*)
     printf '%s\n' 'Branch (checkout / create)'
     ;;
   *"Base branch >"*)
@@ -362,7 +386,7 @@ esac
 	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var stdout, stderr bytes.Buffer
-	if code := run(nil, strings.NewReader("\ny\n"), &stdout, &stderr); code != 0 {
+	if code := run([]string{"--dev"}, strings.NewReader("\ny\n"), &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d; stderr: %s", code, stderr.String())
 	}
 	output := stdout.String()
@@ -437,14 +461,14 @@ esac
 `
 	fzfStub := `#!/bin/sh
 case "$*" in
-  *"Action >"*)
-    printf '%s\n' 'Work on existing issue or task'
+  *"What do you want to do? >"*)
+    printf '%s\n' '▸ Work on existing issue'
     ;;
   *"Issue or task >"*)
     IFS= read -r selected
     printf '%s\n' "$selected"
     ;;
-  *"Work item action >"*)
+  *"Action >"*)
     step=0
     if [ -f "$FZF_STATE" ]; then step=$(cat "$FZF_STATE"); fi
     step=$((step + 1))
@@ -485,7 +509,7 @@ esac
 	t.Setenv("PATH", temporaryDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var stdout, stderr bytes.Buffer
-	if code := run(nil, strings.NewReader("y\n"), &stdout, &stderr); code != 0 {
+	if code := run([]string{"--dev"}, strings.NewReader("y\n"), &stdout, &stderr); code != 0 {
 		t.Fatalf("exit code = %d; stdout: %s; stderr: %s", code, stdout.String(), stderr.String())
 	}
 	output := stdout.String()
@@ -550,8 +574,8 @@ esac
 `
 	fzfStub := `#!/bin/sh
 case "$*" in
-  *"Action >"*)
-    printf '%s\n' 'Create GitLab issue'
+  *"What do you want to do? >"*)
+    printf '%s\n' '+ Create issue'
     ;;
   *"Labels >"*)
     printf '%s\n' 'Label: backend'
@@ -630,8 +654,8 @@ esac
 `
 	fzfStub := `#!/bin/sh
 case "$*" in
-  *"Action >"*)
-    printf '%s\n' 'Create GitLab issue'
+  *"What do you want to do? >"*)
+    printf '%s\n' '+ Create issue'
     ;;
   *"Labels >"*)
     step=0
@@ -716,7 +740,7 @@ case "$*" in
 esac
 `
 	fzfStub := `#!/bin/sh
-printf '%s\n' 'Export GitLab snapshot'
+printf '%s\n' '▸ Export GitLab snapshot'
 `
 	for path, content := range map[string]string{glabPath: glabStub, fzfPath: fzfStub} {
 		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
@@ -816,8 +840,8 @@ esac
 `
 	fzfStub := `#!/bin/sh
 case "$*" in
-  *"Action >"*)
-    printf '%s\n' 'Create GitLab issue'
+  *"What do you want to do? >"*)
+    printf '%s\n' '+ Create issue'
     ;;
   *"Create issue >"*)
     printf '%s\n' 'From YouTrack'

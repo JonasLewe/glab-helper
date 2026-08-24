@@ -25,7 +25,7 @@ const usage = "Usage: glab-helper [--dev | --maintenance] [--dry-run] [--version
 
 const (
 	actionSync = "Sync YouTrack"
-	actionWork = "Work on existing issue or task"
+	actionWork = "Work on existing issue"
 	actionExit = "Exit"
 
 	workActionBranch      = "Branch (checkout / create)"
@@ -34,7 +34,6 @@ const (
 	workActionAssignee    = "Edit assignee"
 	workActionMilestone   = "Edit milestone"
 	workActionClose       = "Close issue"
-	workActionDone        = "Done"
 )
 
 var readYouTrackSnapshot = youtrack.ReadSnapshot
@@ -95,18 +94,22 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	terminal := ui.DetectTerminal(stdout)
 	terminal.Clear(stdout)
+	terminal.WriteStatus(stdout, "Connecting to GitLab...")
 
 	ctx := context.Background()
 	client := gitlab.NewClient()
 	project, err := client.CurrentProject(ctx)
+	terminal.ClearStatus(stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot detect the current GitLab project: %v\n", err)
 		return 1
 	}
 	terminal.WriteHeader(stdout, project.Path)
+	terminal.WriteStatus(stdout, "Checking YouTrack integration...")
 	projectConfigPath := os.Getenv("GLAB_HELPER_CONFIG")
 	projectConfig, projectConfigErr := projectconfig.Load(projectConfigPath)
 	if projectConfigErr != nil && (!errors.Is(projectConfigErr, projectconfig.ErrNotFound) || projectConfigPath != "") {
+		terminal.ClearStatus(stdout)
 		fmt.Fprintf(stderr, "Cannot load the project configuration: %v\n", projectConfigErr)
 		return 1
 	}
@@ -117,6 +120,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if projectConfigAvailable {
 		youTrackConfig, youTrackConfigErr = youtrack.LoadConfig(ctx, client, project.Path, os.Getenv("GLAB_HELPER_YOUTRACK_PROJECT_PATH"), dev)
 		youTrackAvailable = youTrackConfigErr == nil
+	}
+	terminal.ClearStatus(stdout)
+	if youTrackAvailable {
+		terminal.WriteIntegrationAvailable(stdout, "YouTrack")
 	}
 	if maintenance && !youTrackAvailable {
 		if !projectConfigAvailable {
@@ -132,7 +139,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if dryRun {
 			action = actionPreviewReset
 		}
-		selectedAction, selected, err := picker.Choose(ctx, []string{action, actionExit}, ui.Options{Prompt: "Maintenance", BorderLabel: "maintenance"})
+		selectedAction, selected, err := chooseMainAction(ctx, picker, []string{action, actionExit})
 		if err != nil {
 			fmt.Fprintf(stderr, "Cannot select a maintenance action: %v\n", err)
 			return 1
@@ -159,7 +166,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if projectHasTarget(projectConfig, "milestone") {
 			actions = append([]string{actionPreviewMilestones}, actions...)
 		}
-		action, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Developer preview", BorderLabel: "developer previews"})
+		action, selected, err := chooseMainAction(ctx, picker, actions)
 		if err != nil {
 			fmt.Fprintf(stderr, "Cannot select a developer preview: %v\n", err)
 			return 1
@@ -173,20 +180,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return runSynchronization(ctx, client, project.ID, project.Path, youTrackConfig, projectConfig, syncAll, true, stdin, stdout, stderr)
 	}
-	actions := []string{actionWork, actionExit}
-	if dev {
-		actions = []string{actionCreateIssue, actionWork, actionExportSnapshot, actionExit}
-		if youTrackAvailable {
-			syncActions := []string{actionSyncAll}
-			if projectHasTarget(projectConfig, "milestone") {
-				syncActions = append([]string{actionSyncMilestones}, syncActions...)
-			}
-			actions = append(syncActions, actions...)
-		}
-	} else if youTrackAvailable {
-		actions = append([]string{actionSync}, actions...)
-	}
-	action, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Action", BorderLabel: "action"})
+	actions := availableMainActions(dev, youTrackAvailable, projectHasTarget(projectConfig, "milestone"))
+	action, selected, err := chooseMainAction(ctx, picker, actions)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot select an action: %v\n", err)
 		return 1
@@ -214,6 +209,63 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stderr, "Cannot match the selected action.")
 	return 2
+}
+
+func chooseMainAction(ctx context.Context, picker *ui.Picker, actions []string) (string, bool, error) {
+	choices := make([]string, len(actions))
+	for index, action := range actions {
+		choices[index] = mainActionDisplay(action)
+	}
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{
+		Prompt:      "What do you want to do?",
+		BorderLabel: "action",
+		Header:      "ENTER=select",
+		Accent:      ui.Cyan,
+	})
+	if err != nil || !selected {
+		return "", selected, err
+	}
+	for index, rendered := range choices {
+		if choice == rendered {
+			return actions[index], true, nil
+		}
+	}
+	return "", false, fmt.Errorf("cannot match the selected main action %q", choice)
+}
+
+func mainActionDisplay(action string) string {
+	switch action {
+	case actionSync, actionSyncMilestones, actionSyncAll, actionPreviewMilestones, actionPreviewAll:
+		return "~ " + action
+	case actionCreateIssue:
+		return "+ " + action
+	case actionWork, actionExportSnapshot:
+		return "▸ " + action
+	case actionPreviewReset, actionResetProject:
+		return "! " + action
+	case actionExit:
+		return "× " + action
+	default:
+		return action
+	}
+}
+
+func availableMainActions(dev, youTrackAvailable, milestoneTarget bool) []string {
+	if !dev {
+		if youTrackAvailable {
+			return []string{actionSync, actionExit}
+		}
+		return []string{actionExit}
+	}
+	actions := []string{actionCreateIssue, actionWork, actionExportSnapshot, actionExit}
+	if !youTrackAvailable {
+		return actions
+	}
+	syncActions := []string{actionSyncAll}
+	if milestoneTarget {
+		syncActions = append([]string{actionSyncMilestones}, syncActions...)
+	}
+	return append(syncActions, actions...)
 }
 
 func runSynchronization(
@@ -346,7 +398,7 @@ func selectWorkItem(
 	for index, candidate := range candidates {
 		choices[index] = candidate.Display()
 	}
-	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Issue or task", BorderLabel: "open issues and tasks"})
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Issue or task", BorderLabel: "open issues and tasks", Accent: ui.Magenta})
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot select a GitLab issue or task: %v\n", err)
 		return 1
@@ -386,13 +438,17 @@ func selectWorkItem(
 			if issue != nil {
 				actions = append(actions, workActionDescription, workActionLabels, workActionAssignee, workActionMilestone, workActionClose)
 			}
-			actions = append(actions, workActionDone)
-			workAction, selected, err := picker.Choose(ctx, actions, ui.Options{Prompt: "Work item action", BorderLabel: fmt.Sprintf("%s #%d", candidate.Kind, candidate.IID)})
+			workAction, selected, err := picker.Choose(ctx, actions, ui.Options{
+				Prompt:      "Action",
+				BorderLabel: fmt.Sprintf("%s #%d", candidate.Kind, candidate.IID),
+				Header:      "ENTER=select  ESC=done",
+				Accent:      ui.Magenta,
+			})
 			if err != nil {
 				fmt.Fprintf(stderr, "Cannot select a work item action: %v\n", err)
 				return 1
 			}
-			if !selected || workAction == workActionDone {
+			if !selected {
 				fmt.Fprintln(stdout, "Done.")
 				return 0
 			}
@@ -477,7 +533,7 @@ func editIssueLabels(ctx context.Context, picker *ui.Picker, client *gitlab.Clie
 		fmt.Fprintln(stdout, "No GitLab labels are available.")
 		return nil
 	}
-	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Label", BorderLabel: fmt.Sprintf("issue #%d labels", issue.IID)})
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Label", BorderLabel: fmt.Sprintf("issue #%d labels", issue.IID), Accent: ui.Magenta})
 	if err != nil {
 		return fmt.Errorf("select a GitLab issue label: %w", err)
 	}
@@ -519,7 +575,7 @@ func editIssueAssignee(ctx context.Context, picker *ui.Picker, client *gitlab.Cl
 		choices = append(choices, choice)
 		memberByChoice[choice] = member
 	}
-	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Assignee", BorderLabel: fmt.Sprintf("issue #%d assignee", issue.IID)})
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Assignee", BorderLabel: fmt.Sprintf("issue #%d assignee", issue.IID), Accent: ui.Magenta})
 	if err != nil {
 		return fmt.Errorf("select a GitLab issue assignee: %w", err)
 	}
@@ -570,7 +626,7 @@ func editIssueMilestone(ctx context.Context, picker *ui.Picker, client *gitlab.C
 		choices = append(choices, choice)
 		milestoneByChoice[choice] = milestone
 	}
-	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Milestone", BorderLabel: fmt.Sprintf("issue #%d milestone", issue.IID)})
+	choice, selected, err := picker.Choose(ctx, choices, ui.Options{Prompt: "Milestone", BorderLabel: fmt.Sprintf("issue #%d milestone", issue.IID), Accent: ui.Magenta})
 	if err != nil {
 		return fmt.Errorf("select a GitLab issue milestone: %w", err)
 	}
